@@ -1,71 +1,50 @@
 # 🦜 LangChain-In-Depth
 
-A comprehensive learning and reference repository for **LangChain**, demonstrating practical patterns for building AI applications with retrieval-augmented generation (RAG), tool-calling agents, and LCEL chains.
+A hands-on learning repository for **LangChain**, working up from chat models and LCEL chains to retrieval-augmented generation (RAG) and tool-calling agents.
 
-> **Perfect for**: Developers learning LangChain, building production RAG pipelines, and exploring LLM-powered application architectures.
+> **Perfect for**: developers learning LangChain step by step, using each script as a standalone reference for one concept.
 
 ---
 
 ## 📚 Overview
 
-This repository provides **working, production-ready examples** of core LangChain concepts, progressing from fundamentals to advanced patterns:
+Five standalone, runnable scripts, each isolating one concept:
 
-- **Chat Models & Prompts** – Basic LLM interactions and conversation management
-- **LCEL Chains** – LangChain Expression Language for composable, reusable pipelines
-- **Retrieval-Augmented Generation (RAG)** – From mock retrievers to production embeddings + vector stores
-- **Tool Calling & Agents** – Building intelligent agents with tool integration using `create_agent`
-- **Multi-turn Conversations** – State management and context preservation
-
-Each example is **standalone, runnable, and well-documented** for quick learning and reference.
-
----
-
-## 🎯 Key Features
-
-✅ **Incremental Learning** – Examples build from simple to complex  
-✅ **Production-Ready Code** – Real patterns used in production LLM apps  
-✅ **Best Practices** – Error handling, prompt engineering, and optimization  
-✅ **Easy Setup** – One command to get started with `uv`  
-✅ **Clear Documentation** – Inline comments and structured examples  
-
----
+| Script | Concept |
+|---|---|
+| [main.py](main.py) | Chat models, prompt templates, multi-turn conversation, first LCEL chain |
+| [rag-tooling.py](rag-tooling.py) | RAG chain *shape* using a fake in-memory retriever (no API calls for retrieval) |
+| [real_rag.py](real_rag.py) | Real RAG: text splitting, OpenAI embeddings, `InMemoryVectorStore` |
+| [tool_calling.py](tool_calling.py) | Tool-calling agent (`create_agent`) with a strict system prompt and free-form output |
+| [tool_calling_with_pydantic_schema.py](tool_calling_with_pydantic_schema.py) | Same agent pattern, but with structured Pydantic output (`response_format`) |
 
 ## 📋 Requirements
-- Chat models, prompt templates, and multi-turn conversations
-- LCEL (`|`) chains with `RunnableParallel` / `RunnablePassthrough` and output parsers
-- Retrieval-augmented generation (RAG), from a mocked retriever up to a real embeddings + vector store pipeline
-- Tool calling and agents built with `create_agent` (LangChain v1.0's agent interface)
-- Structured agent output with Pydantic (`response_format`)
-
-Dependency management and locking are handled via [uv](https://docs.astral.sh/uv/).
-
-## Requirements
 
 - **Python 3.10+**
-- **[uv](https://docs.astral.sh/uv/)** – Fast Python package manager (replaces pip + venv)
-- **[OpenAI API key](https://platform.openai.com/api-keys)** – For LLM interactions
-- **[Tavily API key](https://tavily.com/)** – For web search tool (agent examples)
+- **[uv](https://docs.astral.sh/uv/)** – fast Python package manager (replaces pip + venv)
+- **[OpenAI API key](https://platform.openai.com/api-keys)** – for chat models and embeddings
+- **[Tavily API key](https://tavily.com/)** – for web search in the agent examples
+
+Dependency management and locking are handled via `uv` (see [pyproject.toml](pyproject.toml) / [uv.lock](uv.lock)).
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/officialbidisha/Langchain-In-Depth.git
 cd Langchain-In-Depth
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
 ```bash
 uv sync
 ```
 
-This installs all dependencies listed in `pyproject.toml` and locks them in `uv.lock`.
-
-### 3. Configure API Keys
+### 3. Configure API keys
 
 Create a `.env` file in the project root:
 
@@ -76,22 +55,9 @@ TAVILY_API_KEY=your-tavily-api-key-here
 
 > ⚠️ **Never commit `.env`** – it's already in `.gitignore`
 
-### 4. Run Examples
-
-Each script runs independently:
+### 4. Run examples
 
 ```bash
-# Chat models, prompt templates, and basic LCEL chains
-uv run python main.py
-
-# RAG pipeline with a mocked retriever (no external calls)
-uv run python rag-tooling.py
-
-# Real RAG with embeddings and vector search
-uv run python real_rag.py
-
-# Tool-calling agent with Tavily web search
-uv run python tool_calling.py
 uv run python main.py                              # chat models, prompt templates, and LCEL basics
 uv run python rag-tooling.py                        # RAG pipeline shape using a mocked retriever
 uv run python real_rag.py                           # real RAG: text splitting, embeddings, vector search
@@ -115,7 +81,50 @@ uv run python tool_calling_with_pydantic_schema.py   # same idea, with structure
 └── .env                                  # Local environment variables (not committed)
 ```
 
-## Learnings
+---
+
+## 🔍 Example Breakdown
+
+### `main.py` – Foundations
+- Initialize a chat model (`ChatOpenAI`)
+- Send `SystemMessage` / `HumanMessage` / `AIMessage` for multi-turn conversation
+- Build a first LCEL chain: `prompt | model | parser`
+
+### `rag-tooling.py` – RAG shape, no external calls
+- A `FakeRetriever` stands in for a real vector store, so the chain's *shape* can be studied without hitting an API
+- `RunnableParallel` runs two branches on the same input: one formats retrieved docs into context, the other passes the question through untouched
+- The prompt's `{context}` / `{question}` placeholders must match the `RunnableParallel` dict keys exactly, or the chain raises `KeyError` at runtime
+
+### `real_rag.py` – Production RAG
+- `RecursiveCharacterTextSplitter` chunks a raw text blob
+- `OpenAIEmbeddings` embeds each chunk into `InMemoryVectorStore`
+- `vectorstore.as_retriever()` performs real cosine-similarity search
+- Same `RunnableParallel → prompt → model → parser` shape as `rag-tooling.py`, now backed by real retrieval
+
+### `tool_calling.py` – Agent with a strict system prompt
+- Two tools: `get_jobs` (Tavily search) and `get_job_details` (Tavily `extract`, to pull full posting content)
+- `create_agent(model, tools=[...], system_prompt=...)` builds the agent
+- The system prompt encodes hard verification rules (explicit LangChain/LangGraph/LangSmith mention, explicit remote status, explicit India eligibility) so the agent can't hedge its way to a target count
+- Output is the raw agent message trace, printed via `message.pretty_print()`
+
+### `tool_calling_with_pydantic_schema.py` – Structured output
+- Same job-search idea, single `get_new_jobs(query: str)` tool with a free-form query
+- `response_format=AgentResponse` (a Pydantic model) makes `create_agent` return `result["structured_response"]` as a typed `AgentResponse` instead of free text
+- `Job` / `AgentResponse` Pydantic models define the exact shape (title, company, location, url) the agent must fill in
+
+---
+
+## 📖 Suggested Learning Path
+
+1. **`main.py`** – chat models, messages, first LCEL chain
+2. **`rag-tooling.py`** – learn the RAG chain shape with no API cost
+3. **`real_rag.py`** – swap the fake retriever for real embeddings + vector search
+4. **`tool_calling.py`** – build an agent, see how much a system prompt has to constrain it
+5. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
+
+---
+
+## 💡 Learnings
 
 Notes from building the tool-calling agents — things that weren't obvious going in:
 
@@ -127,98 +136,6 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **Give tools a query the agent can actually use.** A tool with a single `location: str` parameter can't express "software engineer roles at Meta, Google, Salesforce, Uber" — the agent ended up calling it 4 times with the exact same input, unable to encode what it actually wanted. A free-form `query: str` parameter let it compose the real intent in one call.
 - **VS Code's Python interpreter is separate from the project's `.venv`.** Imports that work fine via `uv run` can still fail in the IDE if `python.defaultInterpreterPath` isn't pointed at `.venv/bin/python` (see `.vscode/settings.json`).
 
-## License
-
-Distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
-Langchain-In-Depth/
-├── main.py                      # Chat models, prompts, LCEL basics
-├── rag-tooling.py              # RAG architecture with fake retriever
-├── real_rag.py                 # Production RAG: embeddings + vector store
-├── tool_calling.py             # Agent with tool integration
-├── pyproject.toml              # Dependencies and project metadata
-├── uv.lock                     # Locked dependency versions
-├── .env                        # Local secrets (not committed)
-├── .gitignore                  # Git ignore rules
-├── README.md                   # This file
-└── LICENSE                     # Repository license
-```
-
----
-
-## 🔍 Example Breakdown
-
-### `main.py` – Foundations
-- Initialize chat models (OpenAI)
-- Create prompt templates
-- Build LCEL chains (`|` operator)
-- Handle multi-turn conversations
-- Parse structured outputs
-
-### `rag-tooling.py` – RAG Architecture
-- Understand RAG pipeline shape
-- Implement retrieval chains
-- Use `RunnableParallel` for parallel execution
-- Mock retriever for testing
-
-### `real_rag.py` – Production RAG
-- Split documents into chunks
-- Generate embeddings
-- Store in vector database
-- Real semantic search
-- End-to-end retrieval flow
-
-### `tool_calling.py` – Agents
-- Define custom tools
-- Create an agent with `create_agent`
-- Implement tool-calling loop
-- Handle function results
-- Build autonomous workflows
-
----
-
-## 🛠️ Technology Stack
-
-| Component | Purpose |
-|-----------|---------|
-| **LangChain** | LLM orchestration framework |
-| **OpenAI API** | Language model (GPT-4, GPT-3.5) |
-| **uv** | Python package management |
-| **python-dotenv** | Environment variable management |
-| **Tavily** | Web search tool for agents |
-
----
-
-## 📖 Learning Path
-
-1. **Start here:** `main.py` – Understand basics
-2. **Next:** `rag-tooling.py` – Learn RAG architecture
-3. **Then:** `real_rag.py` – Build production systems
-4. **Advanced:** `tool_calling.py` – Create intelligent agents
-
----
-
-## 💡 Common Workflows
-
-### Running a Single Example with Arguments
-
-```bash
-uv run python main.py --model gpt-4
-```
-
-### Debugging with Print Statements
-
-```bash
-# Enable verbose logging
-export LANGCHAIN_DEBUG=true
-uv run python main.py
-```
-
-### Installing Additional Dependencies
-
-```bash
-uv pip install package-name
-```
-
 ---
 
 ## 🐛 Troubleshooting
@@ -226,27 +143,9 @@ uv pip install package-name
 | Issue | Solution |
 |-------|----------|
 | `ModuleNotFoundError` | Run `uv sync` to ensure all dependencies are installed |
-| `API key not found` | Check `.env` file exists with correct keys |
-| `Connection timeout` | Verify OpenAI/Tavily services are accessible |
-| `Permission denied` | Ensure API keys have correct permissions/quota |
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! To improve this repository:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/awesome-example`)
-3. Commit your changes (`git commit -m "Add awesome example"`)
-4. Push to the branch (`git push origin feature/awesome-example`)
-5. Open a Pull Request
-
----
-
-## 📝 License
-
-This project is distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
+| `API key not found` | Check `.env` exists in the project root with `OPENAI_API_KEY` and `TAVILY_API_KEY` |
+| `KeyError` in a RAG chain | Make sure the prompt's placeholders match the `RunnableParallel` dict keys exactly |
+| Agent returns too few / hedged results | Tighten the system prompt's exclusion rules, or try a stronger model (see Learnings above) |
 
 ---
 
@@ -254,17 +153,12 @@ This project is distributed under the terms of the [LICENSE](LICENSE) file inclu
 
 - [LangChain Documentation](https://python.langchain.com/)
 - [LCEL Guide](https://python.langchain.com/docs/expression_language/)
-- [RAG Best Practices](https://python.langchain.com/docs/use_cases/question_answering/)
 - [Agents Documentation](https://python.langchain.com/docs/modules/agents/)
 - [OpenAI API Reference](https://platform.openai.com/docs/api-reference)
+- [Tavily API Reference](https://docs.tavily.com/)
 
 ---
 
-## ⭐ Show Your Support
+## 📝 License
 
-If this repository helped you learn LangChain, please consider:
-- ⭐ Starring the repository
-- 🐦 Sharing it with others
-- 💬 Providing feedback or suggestions
-
-**Happy learning! 🚀**
+Distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
