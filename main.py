@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
@@ -29,6 +30,17 @@ def main():
     messages.append(HumanMessage(content="Can you give me more options?"))
     response2 = llm.invoke(messages)
     print(response2.content)
+
+    ### Runnable interface
+    prompt2 = ChatPromptTemplate.from_template("Tell me a fact about {topic}.")
+    model = ChatOpenAI(model="gpt-4o-mini", temperature=0.9, max_tokens=100)
+    parser = StrOutputParser()
+    chain =prompt2|model|parser
+    response3=chain.invoke({"topic":"the moon"})
+    print(response3)
+    
+
+
 
 
 
