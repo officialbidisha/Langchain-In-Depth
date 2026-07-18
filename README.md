@@ -8,7 +8,7 @@ A hands-on learning repository for **LangChain**, working up from chat models an
 
 ## 📚 Overview
 
-Five standalone, runnable scripts, each isolating one concept:
+Six standalone, runnable scripts, each isolating one concept:
 
 | Script | Concept |
 |---|---|
@@ -17,6 +17,7 @@ Five standalone, runnable scripts, each isolating one concept:
 | [real_rag.py](real_rag.py) | Real RAG: text splitting, OpenAI embeddings, `InMemoryVectorStore` |
 | [tool_calling.py](tool_calling.py) | Tool-calling agent (`create_agent`) with a strict system prompt and free-form output |
 | [tool_calling_with_pydantic_schema.py](tool_calling_with_pydantic_schema.py) | Same agent pattern, but with structured Pydantic output (`response_format`) |
+| [tool_calling_manual.py](tool_calling_manual.py) | The same job-search agent with `create_agent` removed — the tool-call loop written by hand |
 
 ## 📋 Requirements
 
@@ -63,6 +64,7 @@ uv run python rag-tooling.py                        # RAG pipeline shape using a
 uv run python real_rag.py                           # real RAG: text splitting, embeddings, vector search
 uv run python tool_calling.py                       # tool-calling job-search agent (Tavily search + extract)
 uv run python tool_calling_with_pydantic_schema.py   # same idea, with structured Pydantic output
+uv run python tool_calling_manual.py                 # the create_agent loop, written by hand
 ```
 
 ---
@@ -76,6 +78,7 @@ uv run python tool_calling_with_pydantic_schema.py   # same idea, with structure
 ├── real_rag.py                           # RAG with real embeddings and vector store retrieval
 ├── tool_calling.py                       # Tool-calling agent: searches + verifies job postings
 ├── tool_calling_with_pydantic_schema.py  # Tool-calling agent with structured (Pydantic) output
+├── tool_calling_manual.py                # Same agent, with create_agent's loop written by hand
 ├── pyproject.toml                        # Project metadata and dependencies
 ├── uv.lock                               # Locked dependency versions
 └── .env                                  # Local environment variables (not committed)
@@ -112,6 +115,12 @@ uv run python tool_calling_with_pydantic_schema.py   # same idea, with structure
 - `response_format=AgentResponse` (a Pydantic model) makes `create_agent` return `result["structured_response"]` as a typed `AgentResponse` instead of free text
 - `Job` / `AgentResponse` Pydantic models define the exact shape (title, company, location, url) the agent must fill in
 
+### `tool_calling_manual.py` – `create_agent`, unwrapped
+- Same two tools and equivalent rules as `tool_calling.py`, but no `create_agent` — `model.bind_tools(TOOLS)` plus a hand-written loop
+- The loop: call the model → if `response.tool_calls` is non-empty, run each tool and append a `ToolMessage` (matched back via `tool_call_id`) → call the model again → repeat until no tool calls remain
+- A `MAX_STEPS` cap guards against the loop never terminating — the same kind of recursion limit `create_agent`/LangGraph applies internally
+- Shows exactly what `create_agent` buys you: this version has no built-in `response_format` coercion, streaming, or checkpointing
+
 ---
 
 ## 📖 Suggested Learning Path
@@ -121,6 +130,7 @@ uv run python tool_calling_with_pydantic_schema.py   # same idea, with structure
 3. **`real_rag.py`** – swap the fake retriever for real embeddings + vector search
 4. **`tool_calling.py`** – build an agent, see how much a system prompt has to constrain it
 5. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
+6. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
 
 ---
 
@@ -135,6 +145,20 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **Model choice affects rule-following, not just quality.** Swapping `gpt-4o-mini` → `gpt-4o` measurably improved compliance (it correctly dropped an on-site job the mini model kept) — worth testing on a stricter model before assuming a prompt is broken.
 - **Give tools a query the agent can actually use.** A tool with a single `location: str` parameter can't express "software engineer roles at Meta, Google, Salesforce, Uber" — the agent ended up calling it 4 times with the exact same input, unable to encode what it actually wanted. A free-form `query: str` parameter let it compose the real intent in one call.
 - **VS Code's Python interpreter is separate from the project's `.venv`.** Imports that work fine via `uv run` can still fail in the IDE if `python.defaultInterpreterPath` isn't pointed at `.venv/bin/python` (see `.vscode/settings.json`).
+- **`create_agent`'s tool loop, unwrapped, is just**: bind tools → invoke → if `response.tool_calls`, run each and append a `ToolMessage` keyed by `tool_call_id` → invoke again → repeat until no tool calls remain (see `tool_calling_manual.py`). What it hides is `response_format` coercion, streaming, and the LangGraph state graph/checkpointing underneath.
+
+---
+
+## 🗒️ Notes for Tomorrow (2026-07-20)
+
+Concrete next steps, picking up from the manual tool-calling loop:
+
+- [ ] **Add structured output to `tool_calling_manual.py` by hand** — once the loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
+- [ ] **Read the LangGraph basics** — `create_agent` is a thin wrapper around a LangGraph `StateGraph`. Understanding nodes/edges/state directly will explain *why* the loop, message list, and stopping condition look the way they do.
+- [ ] **Try parallel tool calls** — prompt the model so a single response contains *multiple* `tool_calls` at once (e.g. "check these 3 URLs"), and confirm the manual loop's `for call in response.tool_calls` handles that correctly.
+- [ ] **Add streaming** — swap `model_with_tools.invoke(...)` for `.stream(...)` in `tool_calling_manual.py` and print tokens as they arrive; note what has to change to still detect `tool_calls`.
+- [ ] **Re-run `tool_calling.py` on `gpt-4o-mini`** and diff the results against `gpt-4o` to see the rule-following gap firsthand (see Learnings above).
+- [ ] **Skim LangChain's own agent docs** on memory/checkpointing — `create_agent` supports persisting state across runs; the manual version currently doesn't.
 
 ---
 
