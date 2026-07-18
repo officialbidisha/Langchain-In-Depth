@@ -10,4 +10,6 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "langchain-core>=0.3",
     "langchain-openai>=0.2",
+    "langchain-text-splitters>=0.3",
+    "numpy>=1.26",
 ]
