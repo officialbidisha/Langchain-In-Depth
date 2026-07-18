@@ -34,9 +34,13 @@ class AgentResponse(BaseModel):
 # --- Tool ---------------------------------------------------------------
 
 @tool
-def get_new_jobs(location: str):
-    """Search for new remote jobs in a given location."""
-    query = f"New remote jobs in {location}"
+def get_new_jobs(query: str):
+    """Search for new remote job postings.
+
+    Compose the query with whatever the user cares about — role,
+    company names, seniority, skills, location, etc. For example:
+    "Software Engineer remote jobs in India at Meta, Google, Salesforce, Uber".
+    """
     print(f"\nSearching for:\n{query}\n")
     return tavily_client.search(
         query=query,

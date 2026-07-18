@@ -31,6 +31,15 @@ Each example is **standalone, runnable, and well-documented** for quick learning
 ---
 
 ## 📋 Requirements
+- Chat models, prompt templates, and multi-turn conversations
+- LCEL (`|`) chains with `RunnableParallel` / `RunnablePassthrough` and output parsers
+- Retrieval-augmented generation (RAG), from a mocked retriever up to a real embeddings + vector store pipeline
+- Tool calling and agents built with `create_agent` (LangChain v1.0's agent interface)
+- Structured agent output with Pydantic (`response_format`)
+
+Dependency management and locking are handled via [uv](https://docs.astral.sh/uv/).
+
+## Requirements
 
 - **Python 3.10+**
 - **[uv](https://docs.astral.sh/uv/)** – Fast Python package manager (replaces pip + venv)
@@ -83,6 +92,11 @@ uv run python real_rag.py
 
 # Tool-calling agent with Tavily web search
 uv run python tool_calling.py
+uv run python main.py                              # chat models, prompt templates, and LCEL basics
+uv run python rag-tooling.py                        # RAG pipeline shape using a mocked retriever
+uv run python real_rag.py                           # real RAG: text splitting, embeddings, vector search
+uv run python tool_calling.py                       # tool-calling job-search agent (Tavily search + extract)
+uv run python tool_calling_with_pydantic_schema.py   # same idea, with structured Pydantic output
 ```
 
 ---
@@ -90,6 +104,32 @@ uv run python tool_calling.py
 ## 📁 Project Structure
 
 ```
+.
+├── main.py                              # Chat models, prompts, multi-turn messages, LCEL chains
+├── rag-tooling.py                        # RAG chain shape with a fake in-memory retriever
+├── real_rag.py                           # RAG with real embeddings and vector store retrieval
+├── tool_calling.py                       # Tool-calling agent: searches + verifies job postings
+├── tool_calling_with_pydantic_schema.py  # Tool-calling agent with structured (Pydantic) output
+├── pyproject.toml                        # Project metadata and dependencies
+├── uv.lock                               # Locked dependency versions
+└── .env                                  # Local environment variables (not committed)
+```
+
+## Learnings
+
+Notes from building the tool-calling agents — things that weren't obvious going in:
+
+- **Check the real SDK before wiring a tool to it.** `tavily-python`'s `TavilyClient` only exposes `search`, `extract`, `crawl`, `map`, etc. — there's no `get_job_details` method, so a tool calling it would fail at runtime the moment the agent tried to use it. Use `tavily.extract(url)` to pull full content from a specific posting instead.
+- **`create_agent`'s real kwargs**: it's `response_format` (not `response_schema`) for structured output, and `.invoke()` expects `{"messages": [...]}`, not a bare string.
+- **Agents under-explore by default.** Given 10+ search results and a budget of 5 verified jobs, `gpt-4o-mini` would check just the *first* candidate, get one hit, and stop — instead of working through the list. The system prompt has to explicitly say "keep going through remaining candidates" and "search again with a different query if you're short," or the agent quits early.
+- **Agents will rationalize instead of exclude.** Once told to return "up to five," the model padded to five by hedging: labeling an on-site job "remote (but listed on-site)," or justifying weak evidence with "may include LangChain." Prompts need to state exclusion as the default and explicitly ban hedging language, or the LLM will bend the rules to hit the target count.
+- **Model choice affects rule-following, not just quality.** Swapping `gpt-4o-mini` → `gpt-4o` measurably improved compliance (it correctly dropped an on-site job the mini model kept) — worth testing on a stricter model before assuming a prompt is broken.
+- **Give tools a query the agent can actually use.** A tool with a single `location: str` parameter can't express "software engineer roles at Meta, Google, Salesforce, Uber" — the agent ended up calling it 4 times with the exact same input, unable to encode what it actually wanted. A free-form `query: str` parameter let it compose the real intent in one call.
+- **VS Code's Python interpreter is separate from the project's `.venv`.** Imports that work fine via `uv run` can still fail in the IDE if `python.defaultInterpreterPath` isn't pointed at `.venv/bin/python` (see `.vscode/settings.json`).
+
+## License
+
+Distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
 Langchain-In-Depth/
 ├── main.py                      # Chat models, prompts, LCEL basics
 ├── rag-tooling.py              # RAG architecture with fake retriever
