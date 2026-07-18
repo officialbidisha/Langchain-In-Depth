@@ -18,6 +18,21 @@ def main():
     response = llm.invoke(messages)
     print(response.content)
 
+    ## Multi turn conversation
+
+    messages = [
+        SystemMessage(content="You are a helpful assistant that translates corporate jargon into plain English."),
+        HumanMessage(content="What is a good name for a company that makes Streaming Products?"),
+    ]
+    response = llm.invoke(messages)
+    messages.append(AIMessage(content=response.content))
+    messages.append(HumanMessage(content="Can you give me more options?"))
+    response2 = llm.invoke(messages)
+    print(response2.content)
+
+
+
+
 
 if __name__ == "__main__":
     main()
