@@ -176,36 +176,22 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 
 ---
 
-## 🗒️ Notes for Tomorrow (2026-07-20)
+## 🗒️ Notes for Tomorrow
 
-Concrete next steps, picking up from the manual tool-calling loop:
+A living list, not a daily log — check items off or remove them as they're done instead of re-queuing under a new date.
 
-- [ ] **Add structured output to `tool_calling_manual.py` by hand** — once the loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
+**Next up**
+- [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
+- [ ] **Make the manual tool-call loops actually concurrent** — every `for tool_call in result.tool_calls:` loop so far runs its Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
+- [ ] **Mix an `@tool` function and a bare Pydantic model in the same `bind_tools([...])` call** — confirm the model can request either shape of tool call in one turn, and that dispatch-by-`tool_name` handles both without special-casing.
 - [ ] **Read the LangGraph basics** — `create_agent` is a thin wrapper around a LangGraph `StateGraph`. Understanding nodes/edges/state directly will explain *why* the loop, message list, and stopping condition look the way they do.
-- [ ] **Try parallel tool calls** — prompt the model so a single response contains *multiple* `tool_calls` at once (e.g. "check these 3 URLs"), and confirm the manual loop's `for call in response.tool_calls` handles that correctly.
-- [ ] **Add streaming** — swap `model_with_tools.invoke(...)` for `.stream(...)` in `tool_calling_manual.py` and print tokens as they arrive; note what has to change to still detect `tool_calls`.
+- [ ] **Add streaming** — swap `.invoke(...)` for `.stream(...)` in `tool_calling_manual.py` and print tokens as they arrive; note what has to change to still detect `tool_calls`.
 - [ ] **Re-run `tool_calling.py` on `gpt-4o-mini`** and diff the results against `gpt-4o` to see the rule-following gap firsthand (see Learnings above).
-- [ ] **Skim LangChain's own agent docs** on memory/checkpointing — `create_agent` supports persisting state across runs; the manual version currently doesn't.
+- [ ] **Skim LangChain's own agent docs** on memory/checkpointing — `create_agent` supports persisting state across runs; the manual versions currently don't.
 
----
-
-## 🗒️ Notes for Tomorrow (2026-07-28)
-
-Picking up from `teach_tool_calling.py`:
-
-- [x] **Try parallel tool calls** *(confirmed, done in `teach_tool_calling.py`)* — one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the `for tool_call in result.tool_calls` loop resolved all 4 correctly, matched back via `tool_call_id`.
-- [x] **Write Stage 1 of `tool_calling_manual_pydantic.py`** *(done)* — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
-- [ ] **Make the tool-call loop actually concurrent** — both manual loops run their Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
-
----
-
-## 🗒️ Notes for Tomorrow (2026-07-29)
-
-Picking up from `tool_calling_manual_pydantic.py`:
-
-- [ ] **Try `bind_tools` with a mix of an `@tool` function and a bare Pydantic model in the same list** — confirm the model can request either shape of tool call in one turn, and that the manual loop's dispatch-by-`tool_name` logic handles both without special-casing.
-- [ ] **Add structured output to `tool_calling_manual_pydantic.py`** — same idea queued for `tool_calling_manual.py` back on 2026-07-20: pass the final answer through `model.with_structured_output(AgentResponse)` once the loop ends, and compare to `response_format=` in `tool_calling_with_pydantic_schema.py`.
-- [ ] **Make the tool-call loop actually concurrent** (carried over) — `asyncio.gather`/thread pool instead of the sequential `for` loop, measure the wall-clock difference.
+**Done**
+- [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
+- [x] **Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
 
 ---
 
