@@ -8,7 +8,7 @@ A hands-on learning repository for **LangChain**, working up from chat models an
 
 ## 📚 Overview
 
-Six standalone, runnable scripts, each isolating one concept:
+Eight standalone, runnable scripts, each isolating one concept:
 
 | Script | Concept |
 |---|---|
@@ -19,6 +19,7 @@ Six standalone, runnable scripts, each isolating one concept:
 | [tool_calling_with_pydantic_schema.py](tool_calling_with_pydantic_schema.py) | Same agent pattern, but with structured Pydantic output (`response_format`) |
 | [tool_calling_manual.py](tool_calling_manual.py) | The same job-search agent with `create_agent` removed — the tool-call loop written by hand |
 | [teach_tool_calling.py](teach_tool_calling.py) | Minimal, single-tool version of the manual loop — isolates what a `ToolCall` dict is for and why `BaseTool.invoke()` needs the whole thing, not just `args` |
+| [tool_calling_manual_pydantic.py](tool_calling_manual_pydantic.py) | Same manual loop, but the tool is a bare Pydantic model, not `@tool` — isolates schema-only binding vs. execution |
 
 ## 📋 Requirements
 
@@ -66,6 +67,8 @@ uv run python real_rag.py                           # real RAG: text splitting, 
 uv run python tool_calling.py                       # tool-calling job-search agent (Tavily search + extract)
 uv run python tool_calling_with_pydantic_schema.py   # same idea, with structured Pydantic output
 uv run python tool_calling_manual.py                 # the create_agent loop, written by hand
+uv run python teach_tool_calling.py                  # minimal manual loop: ToolCall shape, tool_call_id matching
+uv run python tool_calling_manual_pydantic.py         # same loop, tool defined via bare Pydantic model
 ```
 
 ---
@@ -81,6 +84,7 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 ├── tool_calling_with_pydantic_schema.py  # Tool-calling agent with structured (Pydantic) output
 ├── tool_calling_manual.py                # Same agent, with create_agent's loop written by hand
 ├── teach_tool_calling.py                 # Minimal manual loop: ToolCall shape, tool_call_id matching
+├── tool_calling_manual_pydantic.py       # Same loop, tool schema as a bare Pydantic model (no @tool)
 ├── pyproject.toml                        # Project metadata and dependencies
 ├── uv.lock                               # Locked dependency versions
 └── .env                                  # Local environment variables (not committed)
@@ -130,6 +134,13 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 - That `tool_call_id` tag is the only thing letting 4 parallel requests in one AI turn get matched back to their 4 correct answers once the message list is sent back to the model
 - The `for tool_call in result.tool_calls:` loop that runs the tools is sequential in your code (each Tavily call blocks before the next starts) even though the model's *request* for them was parallel — "parallel in the API's eyes" and "concurrent in your code" are different things
 
+### `tool_calling_manual_pydantic.py` – Schema-only binding, no `@tool`
+- `GetNewJobs(BaseModel)` defines only the input schema (fields + docstring) — no function body, no execution logic attached
+- `bind_tools([GetNewJobs])` accepts the Pydantic **class** directly; the resulting `result.tool_calls` has the identical `{name, args, id, type}` shape as `teach_tool_calling.py`'s `@tool`-based version — `bind_tools` doesn't care what shape the schema came from
+- Because there's no `BaseTool`, there's no `.invoke()` and no automatic `ToolMessage` wrapping — both are written by hand: route `tool_call["name"]` to the real `get_new_jobs()` function, call it with `**tool_call["args"]`, then manually build `ToolMessage(content=..., tool_call_id=tool_call["id"])`
+- `get_new_jobs(**tool_args)` (unpack into keyword args) vs. `BaseTool.invoke(tool_call)` (pass the whole dict) look similar but solve opposite problems — a plain function needs args spread across its named parameters; `BaseTool.invoke()` wants one object it can pattern-match on. Same `tool_call`/`tool_args`, opposite calling convention
+- Hit the same structural rule OpenAI's API enforces on every manual loop: a `ToolMessage` must directly follow an assistant message containing the matching `tool_calls` id, or the API 400s with `"messages with role 'tool' must be a response to a preceeding message with 'tool_calls'"` — forgetting `messages.append(result)` before appending `ToolMessage`s breaks this
+
 ---
 
 ## 📖 Suggested Learning Path
@@ -141,6 +152,7 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 5. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
 6. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
 7. **`teach_tool_calling.py`** – same loop, minimal single-tool version — the one to reread when the `ToolCall` dict / `tool_call_id` mechanics get fuzzy
+8. **`tool_calling_manual_pydantic.py`** – same loop again, but the tool is a bare Pydantic model instead of `@tool` — see what binding buys you (a schema) vs. what it doesn't (execution)
 
 ---
 
@@ -158,6 +170,9 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **`create_agent`'s tool loop, unwrapped, is just**: bind tools → invoke → if `response.tool_calls`, run each and append a `ToolMessage` keyed by `tool_call_id` → invoke again → repeat until no tool calls remain (see `tool_calling_manual.py`). What it hides is `response_format` coercion, streaming, and the LangGraph state graph/checkpointing underneath.
 - **`BaseTool.invoke()` reads its input's *shape* to decide what to do.** Pass a plain dict of args (`{'query': ..., 'search_depth': ...}`) and it runs the tool, returning the raw output. Pass a full `ToolCall` dict (`{'name', 'args', 'id', 'type': 'tool_call'}`) and it detects that shape, uses `args` to run the function, but wraps the return value in a `ToolMessage` carrying `tool_call_id`. There's no separate "tool call mode" flag — it's purely inferred from the keys present in the input (`teach_tool_calling.py`).
 - **`.invoke(**kwargs)` isn't a thing for `BaseTool`.** Its signature takes one positional `input` (str, dict, or `ToolCall`) — unpacking args as `.invoke(**tool_args)` throws `TypeError: missing 1 required positional argument: 'input'`. Pass the dict itself, not its unpacked keys.
+- **`bind_tools` only cares about producing valid `tool_calls` — not what defined the schema.** A bare Pydantic class (no `@tool`) binds and produces `tool_calls` with the exact same `{name, args, id, type}` shape as a decorated function. Execution is always on you; `@tool` just also hands you a convenient `.invoke()` to do it with (`tool_calling_manual_pydantic.py`).
+- **Plain functions and `BaseTool` want opposite calling conventions for the same data.** A raw Python function needs its args dict *spread*: `get_new_jobs(**tool_args)`. `BaseTool.invoke()` wants the *whole* `tool_call` dict as one object so it can pattern-match on it internally. Passing a spread dict to `invoke()`, or an unspread dict to a plain function, both fail — just with different errors (`TypeError` vs. a 422 from the API receiving a dict where a string was expected).
+- **OpenAI's "tool must follow tool_calls" rule is a bracket-matching check.** An assistant message with `tool_calls` is the opening bracket for each call id; a `ToolMessage` is the closing bracket. Every manual loop needs `messages.append(result)` (the AIMessage) *before* appending any `ToolMessage`s, or the API 400s on the first tool message it can't match to a preceding open.
 
 ---
 
@@ -179,8 +194,18 @@ Concrete next steps, picking up from the manual tool-calling loop:
 Picking up from `teach_tool_calling.py`:
 
 - [x] **Try parallel tool calls** *(confirmed, done in `teach_tool_calling.py`)* — one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the `for tool_call in result.tool_calls` loop resolved all 4 correctly, matched back via `tool_call_id`.
-- [ ] **Write Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, but the tool's schema is defined as a Pydantic model instead of via `@tool`, to see how `bind_tools` handles a Pydantic class vs. a decorated function.
-- [ ] **Make the tool-call loop actually concurrent** — `teach_tool_calling.py`'s `for` loop runs the 4 Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
+- [x] **Write Stage 1 of `tool_calling_manual_pydantic.py`** *(done)* — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
+- [ ] **Make the tool-call loop actually concurrent** — both manual loops run their Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
+
+---
+
+## 🗒️ Notes for Tomorrow (2026-07-29)
+
+Picking up from `tool_calling_manual_pydantic.py`:
+
+- [ ] **Try `bind_tools` with a mix of an `@tool` function and a bare Pydantic model in the same list** — confirm the model can request either shape of tool call in one turn, and that the manual loop's dispatch-by-`tool_name` logic handles both without special-casing.
+- [ ] **Add structured output to `tool_calling_manual_pydantic.py`** — same idea queued for `tool_calling_manual.py` back on 2026-07-20: pass the final answer through `model.with_structured_output(AgentResponse)` once the loop ends, and compare to `response_format=` in `tool_calling_with_pydantic_schema.py`.
+- [ ] **Make the tool-call loop actually concurrent** (carried over) — `asyncio.gather`/thread pool instead of the sequential `for` loop, measure the wall-clock difference.
 
 ---
 
