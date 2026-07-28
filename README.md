@@ -174,6 +174,16 @@ Concrete next steps, picking up from the manual tool-calling loop:
 
 ---
 
+## 🗒️ Notes for Tomorrow (2026-07-28)
+
+Picking up from `teach_tool_calling.py`:
+
+- [x] **Try parallel tool calls** *(confirmed, done in `teach_tool_calling.py`)* — one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the `for tool_call in result.tool_calls` loop resolved all 4 correctly, matched back via `tool_call_id`.
+- [ ] **Write Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, but the tool's schema is defined as a Pydantic model instead of via `@tool`, to see how `bind_tools` handles a Pydantic class vs. a decorated function.
+- [ ] **Make the tool-call loop actually concurrent** — `teach_tool_calling.py`'s `for` loop runs the 4 Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
+
+---
+
 ## 🐛 Troubleshooting
 
 | Issue | Solution |
