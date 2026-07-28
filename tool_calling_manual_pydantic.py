@@ -30,6 +30,13 @@ def get_new_jobs(query, search_depth="advanced", max_results=15):
     return tavily_client.search(query=query, search_depth=search_depth, max_results=max_results)
 
 
+# No BaseTool exists to look the function up on, so the name -> callable
+# mapping is maintained by hand instead (mirrors TOOLS_BY_NAME in
+# teach_tool_calling.py, just pointing at plain functions, not BaseTools).
+# Keyed off the schema's own name so it can't drift out of sync if renamed.
+FUNCTIONS_BY_NAME = {GetNewJobs.__name__: get_new_jobs}
+
+
 if __name__ == "__main__":
     model = ChatOpenAI(model="gpt-4o", temperature=0)
     binded_model = model.bind_tools([GetNewJobs])  # pass the Pydantic CLASS itself
@@ -40,14 +47,10 @@ if __name__ == "__main__":
     messages.append(result)  # keep the AIMessage(tool_calls=...) in history
 
     for tool_call in result.tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
-        if tool_name == "GetNewJobs":
-            # No .invoke() here — no BaseTool exists, so args are unpacked
-            # by hand and the ToolMessage is built manually.
-            tool_output = get_new_jobs(**tool_args)
-            tool_message = ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
-            messages.append(tool_message)
+        # No .invoke() here — args are unpacked by hand and the ToolMessage
+        # is built manually.
+        tool_output = FUNCTIONS_BY_NAME[tool_call["name"]](**tool_call["args"])
+        messages.append(ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"]))
 
     final_result = binded_model.invoke(messages)
     print(final_result.content)
