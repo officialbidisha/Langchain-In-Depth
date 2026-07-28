@@ -18,6 +18,7 @@ Six standalone, runnable scripts, each isolating one concept:
 | [tool_calling.py](tool_calling.py) | Tool-calling agent (`create_agent`) with a strict system prompt and free-form output |
 | [tool_calling_with_pydantic_schema.py](tool_calling_with_pydantic_schema.py) | Same agent pattern, but with structured Pydantic output (`response_format`) |
 | [tool_calling_manual.py](tool_calling_manual.py) | The same job-search agent with `create_agent` removed — the tool-call loop written by hand |
+| [teach_tool_calling.py](teach_tool_calling.py) | Minimal, single-tool version of the manual loop — isolates what a `ToolCall` dict is for and why `BaseTool.invoke()` needs the whole thing, not just `args` |
 
 ## 📋 Requirements
 
@@ -79,6 +80,7 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 ├── tool_calling.py                       # Tool-calling agent: searches + verifies job postings
 ├── tool_calling_with_pydantic_schema.py  # Tool-calling agent with structured (Pydantic) output
 ├── tool_calling_manual.py                # Same agent, with create_agent's loop written by hand
+├── teach_tool_calling.py                 # Minimal manual loop: ToolCall shape, tool_call_id matching
 ├── pyproject.toml                        # Project metadata and dependencies
 ├── uv.lock                               # Locked dependency versions
 └── .env                                  # Local environment variables (not committed)
@@ -121,6 +123,13 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 - A `MAX_STEPS` cap guards against the loop never terminating — the same kind of recursion limit `create_agent`/LangGraph applies internally
 - Shows exactly what `create_agent` buys you: this version has no built-in `response_format` coercion, streaming, or checkpointing
 
+### `teach_tool_calling.py` – The `ToolCall` shape, isolated
+- One tool (`get_new_jobs`), no system prompt engineering — strips away agent behavior to focus purely on the request/execute/respond mechanics
+- A single `HumanMessage` produced one `AIMessage` with **4** `tool_calls` (Meta, Google, Salesforce, Uber) — the model batches independent lookups into one turn instead of asking one at a time
+- `BaseTool.invoke()` branches on its input's shape (see `_prep_run_args` in `langchain_core/tools/base.py`): pass just `tool_call["args"]` and you get the tool's raw return value; pass the **whole** `tool_call` dict (`{name, args, id, type}`) and it unwraps `args` to run the function, then wraps the output in a `ToolMessage` tagged with `tool_call_id`
+- That `tool_call_id` tag is the only thing letting 4 parallel requests in one AI turn get matched back to their 4 correct answers once the message list is sent back to the model
+- The `for tool_call in result.tool_calls:` loop that runs the tools is sequential in your code (each Tavily call blocks before the next starts) even though the model's *request* for them was parallel — "parallel in the API's eyes" and "concurrent in your code" are different things
+
 ---
 
 ## 📖 Suggested Learning Path
@@ -131,6 +140,7 @@ uv run python tool_calling_manual.py                 # the create_agent loop, wr
 4. **`tool_calling.py`** – build an agent, see how much a system prompt has to constrain it
 5. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
 6. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
+7. **`teach_tool_calling.py`** – same loop, minimal single-tool version — the one to reread when the `ToolCall` dict / `tool_call_id` mechanics get fuzzy
 
 ---
 
@@ -146,6 +156,8 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **Give tools a query the agent can actually use.** A tool with a single `location: str` parameter can't express "software engineer roles at Meta, Google, Salesforce, Uber" — the agent ended up calling it 4 times with the exact same input, unable to encode what it actually wanted. A free-form `query: str` parameter let it compose the real intent in one call.
 - **VS Code's Python interpreter is separate from the project's `.venv`.** Imports that work fine via `uv run` can still fail in the IDE if `python.defaultInterpreterPath` isn't pointed at `.venv/bin/python` (see `.vscode/settings.json`).
 - **`create_agent`'s tool loop, unwrapped, is just**: bind tools → invoke → if `response.tool_calls`, run each and append a `ToolMessage` keyed by `tool_call_id` → invoke again → repeat until no tool calls remain (see `tool_calling_manual.py`). What it hides is `response_format` coercion, streaming, and the LangGraph state graph/checkpointing underneath.
+- **`BaseTool.invoke()` reads its input's *shape* to decide what to do.** Pass a plain dict of args (`{'query': ..., 'search_depth': ...}`) and it runs the tool, returning the raw output. Pass a full `ToolCall` dict (`{'name', 'args', 'id', 'type': 'tool_call'}`) and it detects that shape, uses `args` to run the function, but wraps the return value in a `ToolMessage` carrying `tool_call_id`. There's no separate "tool call mode" flag — it's purely inferred from the keys present in the input (`teach_tool_calling.py`).
+- **`.invoke(**kwargs)` isn't a thing for `BaseTool`.** Its signature takes one positional `input` (str, dict, or `ToolCall`) — unpacking args as `.invoke(**tool_args)` throws `TypeError: missing 1 required positional argument: 'input'`. Pass the dict itself, not its unpacked keys.
 
 ---
 
