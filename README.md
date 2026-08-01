@@ -8,13 +8,14 @@ A hands-on learning repository for **LangChain**, working up from chat models an
 
 ## 📚 Overview
 
-Ten standalone, runnable scripts, each isolating one concept:
+Eleven standalone, runnable scripts, each isolating one concept:
 
 | Script | Concept |
 |---|---|
 | [main.py](main.py) | Chat models, prompt templates, multi-turn conversation, first LCEL chain |
 | [rag-tooling.py](rag-tooling.py) | RAG chain *shape* using a fake in-memory retriever (no API calls for retrieval) |
 | [real_rag.py](real_rag.py) | Real RAG: text splitting, OpenAI embeddings, `InMemoryVectorStore` |
+| [ingestion.py](ingestion.py) | Persistent RAG ingestion pipeline: crawl real docs with Tavily, chunk, embed, and upsert into a Pinecone index |
 | [tool_calling.py](tool_calling.py) | Tool-calling agent (`create_agent`) with a strict system prompt and free-form output |
 | [tool_calling_with_pydantic_schema.py](tool_calling_with_pydantic_schema.py) | Same agent pattern, but with structured Pydantic output (`response_format`) |
 | [tool_calling_manual.py](tool_calling_manual.py) | The same job-search agent with `create_agent` removed — the tool-call loop written by hand |
@@ -28,7 +29,8 @@ Ten standalone, runnable scripts, each isolating one concept:
 - **Python 3.10+**
 - **[uv](https://docs.astral.sh/uv/)** – fast Python package manager (replaces pip + venv)
 - **[OpenAI API key](https://platform.openai.com/api-keys)** – for chat models and embeddings
-- **[Tavily API key](https://tavily.com/)** – for web search in the agent examples
+- **[Tavily API key](https://tavily.com/)** – for web search in the agent examples, and web crawling in `ingestion.py`
+- **[Pinecone API key](https://www.pinecone.io/)** – for the persistent vector index used by `ingestion.py`
 
 Dependency management and locking are handled via `uv` (see [pyproject.toml](pyproject.toml) / [uv.lock](uv.lock)).
 
@@ -56,6 +58,7 @@ Create a `.env` file in the project root:
 ```env
 OPENAI_API_KEY=sk-your-openai-key-here
 TAVILY_API_KEY=your-tavily-api-key-here
+PINECONE_API_KEY=your-pinecone-api-key-here
 ```
 
 > ⚠️ **Never commit `.env`** – it's already in `.gitignore`
@@ -66,6 +69,7 @@ TAVILY_API_KEY=your-tavily-api-key-here
 uv run python main.py                              # chat models, prompt templates, and LCEL basics
 uv run python rag-tooling.py                        # RAG pipeline shape using a mocked retriever
 uv run python real_rag.py                           # real RAG: text splitting, embeddings, vector search
+uv run python ingestion.py                          # crawl docs.langchain.com, chunk, embed, upsert into Pinecone
 uv run python tool_calling.py                       # tool-calling job-search agent (Tavily search + extract)
 uv run python tool_calling_with_pydantic_schema.py   # same idea, with structured Pydantic output
 uv run python tool_calling_manual.py                 # the create_agent loop, written by hand
@@ -84,6 +88,7 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 ├── main.py                              # Chat models, prompts, multi-turn messages, LCEL chains
 ├── rag-tooling.py                        # RAG chain shape with a fake in-memory retriever
 ├── real_rag.py                           # RAG with real embeddings and vector store retrieval
+├── ingestion.py                          # Crawl, chunk, embed, and upsert docs into a Pinecone index
 ├── tool_calling.py                       # Tool-calling agent: searches + verifies job postings
 ├── tool_calling_with_pydantic_schema.py  # Tool-calling agent with structured (Pydantic) output
 ├── tool_calling_manual.py                # Same agent, with create_agent's loop written by hand
@@ -115,6 +120,17 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 - `OpenAIEmbeddings` embeds each chunk into `InMemoryVectorStore`
 - `vectorstore.as_retriever()` performs real cosine-similarity search
 - Same `RunnableParallel → prompt → model → parser` shape as `rag-tooling.py`, now backed by real retrieval
+
+### `ingestion.py` – Persistent RAG ingestion pipeline
+- Five-stage pipeline: **Crawl → Extract → Chunk → Embed → Upsert** — a one-time/periodic batch job, entirely separate from any script that later *queries* the index
+- `TavilyCrawl()` does a BFS-style crawl from a root URL (`max_depth` = link-hops from root) and returns extracted page content per URL — no separate scraping code needed
+- `TavilyCrawl` has `handle_tool_error=True` by default: on an internal failure it returns the error as a plain **string** instead of raising, so `res["results"]` must be guarded with `isinstance(res, dict)` or a transient failure surfaces as a confusing `TypeError: string indices must be integers` instead of the real error message
+- Not every crawled URL yields `raw_content` (redirects, non-HTML assets, failed extraction can return `None`) — `Document(page_content=None)` raises a pydantic `ValidationError`, so results are filtered with `if doc.get("raw_content")` before building `Document`s
+- `RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)` splits each page; `split_documents` (as opposed to `split_text`) also propagates each chunk's `metadata={"source": url}` forward, which is what lets a later retriever cite which page an answer came from
+- `OpenAIEmbeddings(model="text-embedding-3-large", dimensions=1024)` — `text-embedding-3-large` natively outputs 3072-dim vectors, but OpenAI v3 embedding models support Matryoshka-style truncation via `dimensions=`. It's pinned to 1024 here because Pinecone indexes have a **fixed** dimension set at creation time, and `langchain-doc-index` was created as a Pinecone-integrated-inference index (bound to `llama-text-embed-v2`, 1024-dim) — the embedding model has to match the index, not the other way around
+- `embeddings`' own `chunk_size=50` is unrelated to the text splitter's `chunk_size=4000` — it's how many texts get batched into one OpenAI embeddings API call (throughput vs. rate-limit tradeoff), not a text length. Two different "chunk sizes" a few lines apart, easy to conflate
+- `vectorstore.add_documents(split_docs)` does the actual embed-then-upsert in one call: `embeddings.embed_documents(...)` for vectors, then a Pinecone upsert of `(vector, metadata)` per chunk
+- No explicit `ids` are passed to `add_documents`, so re-running the script against the same URLs inserts duplicate vectors rather than upserting-in-place — not yet idempotent (see Notes for Tomorrow)
 
 ### `tool_calling.py` – Agent with a strict system prompt
 - Two tools: `get_jobs` (Tavily search) and `get_job_details` (Tavily `extract`, to pull full posting content)
@@ -179,13 +195,14 @@ flowchart TD
 1. **`main.py`** – chat models, messages, first LCEL chain
 2. **`rag-tooling.py`** – learn the RAG chain shape with no API cost
 3. **`real_rag.py`** – swap the fake retriever for real embeddings + vector search
-4. **`tool_calling.py`** – build an agent, see how much a system prompt has to constrain it
-5. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
-6. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
-7. **`teach_tool_calling.py`** – same loop, minimal single-tool version — the one to reread when the `ToolCall` dict / `tool_call_id` mechanics get fuzzy
-8. **`tool_calling_manual_pydantic.py`** – same loop again, but the tool is a bare Pydantic model instead of `@tool` — see what binding buys you (a schema) vs. what it doesn't (execution)
-9. **`teach_react_agent.py`** – switch tracks entirely: no `bind_tools`, a text format the model follows instead — see the ReAct loop mechanics with just one tool
-10. **`agent_loop_with_react_prompt.py`** – same ReAct loop with two tools — see the model actually choose, and see what breaks (and how to fix it) once there's a real choice to parse
+4. **`ingestion.py`** – move from an in-memory RAG demo to a real, persistent pipeline: crawl real docs, chunk, embed, and upsert into a Pinecone index built to survive past one script run
+5. **`tool_calling.py`** – build an agent, see how much a system prompt has to constrain it
+6. **`tool_calling_with_pydantic_schema.py`** – same agent, structured output instead of free text
+7. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
+8. **`teach_tool_calling.py`** – same loop, minimal single-tool version — the one to reread when the `ToolCall` dict / `tool_call_id` mechanics get fuzzy
+9. **`tool_calling_manual_pydantic.py`** – same loop again, but the tool is a bare Pydantic model instead of `@tool` — see what binding buys you (a schema) vs. what it doesn't (execution)
+10. **`teach_react_agent.py`** – switch tracks entirely: no `bind_tools`, a text format the model follows instead — see the ReAct loop mechanics with just one tool
+11. **`agent_loop_with_react_prompt.py`** – same ReAct loop with two tools — see the model actually choose, and see what breaks (and how to fix it) once there's a real choice to parse
 
 ---
 
@@ -212,6 +229,11 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **`ClassVar` is the escape hatch for a genuinely class-level attribute on a `BaseModel`.** `description: ClassVar[str] = "..."` tells Pydantic "don't manage this as a field" — it becomes a normal Python class attribute, readable directly off the class (`MyModel.description`), no instance or `model_fields` lookup needed.
 - **Where a field sits in the text format changes how you parse it.** The *last* field before a `stop` sequence (`Action Input`) can be extracted with `reply.split(label)[-1].strip()` since nothing trails it. A field with something after it on the next line (`Action`, followed by `Action Input`) needs isolating to its own line first (`reply.splitlines()` + `line.startswith(label)`) before the same split/strip — grabbing everything after the label directly would swallow the next field too.
 - **Hand-rolled ReAct loops have no built-in repetition guard.** Unlike `create_agent`'s LangGraph state machine, nothing stops the model from retrying an identical `Action`/`Action Input` pair forever if a search comes back thin — it'll apologize and retry until the step budget runs out. Needs to be handled explicitly: an instruction in the prompt against repeating a tried action, and/or a larger step budget as a backstop.
+- **A vector index's dimension is fixed at creation — the embedding model has to match it, not the reverse.** `langchain-doc-index` is a Pinecone integrated-inference index bound to `llama-text-embed-v2` (1024-dim). Upserting 3072-dim vectors from `text-embedding-3-large` failed with `PineconeApiException: Vector dimension 3072 does not match the dimension of the index 1024`. Fixed non-destructively via `OpenAIEmbeddings(dimensions=1024)` — OpenAI's v3 embedding models support Matryoshka-style truncation, so the model can be told to output a shorter vector instead of recreating the index.
+- **Two unrelated things are both called "chunk size" a few lines apart in `ingestion.py`.** `RecursiveCharacterTextSplitter(chunk_size=4000)` is a character length per text chunk. `OpenAIEmbeddings(chunk_size=50)` is how many texts get batched into a single embeddings API call. Same word, orthogonal concerns — worth reading the surrounding code, not just the parameter name.
+- **Tools with `handle_tool_error=True` (the default on many built-in LangChain tools, including `TavilyCrawl`) don't raise on failure — they return the error as a string.** Indexing into that string like it's still the expected dict (`res["results"]`) produces a misleading `TypeError: string indices must be integers` that hides the real underlying error. Always safe to check `isinstance(res, dict)` before trusting a tool's return shape.
+- **A web crawl's results aren't uniformly usable.** Some crawled URLs return `raw_content: None` (redirects, non-HTML assets, failed extraction). `Document(page_content=None)` raises a pydantic `ValidationError` since `page_content` is a required string — filter with `if doc.get("raw_content")` before constructing `Document`s.
+- **macOS + `uv`/non-system Python builds can fail HTTPS calls with `CERTIFICATE_VERIFY_FAILED`** because the interpreter's `ssl` module doesn't always pick up the OS's trusted CA bundle. Pointing both `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` at `certifi.where()` (before any HTTPS-calling library is used) fixes it for both the stdlib `ssl` module and `requests`-based clients.
 
 ---
 
@@ -232,6 +254,11 @@ A living list, not a daily log — check items off or remove them as they're don
 *Tool-calling track*
 - [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
 
+*Ingestion / RAG-on-real-docs track (`ingestion.py`)*
+- [ ] **Write the retrieval-side script** that actually queries `langchain-doc-index` (a `PineconeVectorStore.as_retriever()` + LCEL chain, same shape as `real_rag.py`) — ingestion exists, nothing reads from it yet.
+- [ ] **Make ingestion idempotent** — pass explicit deterministic `ids` (e.g. a hash of the URL, or URL + chunk index) to `add_documents` so re-running the script upserts-in-place instead of inserting duplicate vectors for the same pages.
+- [ ] **Decide client-side vs. Pinecone-integrated embedding on purpose.** Right now `ingestion.py` computes embeddings client-side via OpenAI and just happens to match the index's dimension — worth deliberately comparing against using Pinecone's own hosted `llama-text-embed-v2` model directly (no OpenAI embedding call at all) to see the tradeoffs.
+
 **Done**
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
 - [x] **Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
@@ -248,6 +275,9 @@ A living list, not a daily log — check items off or remove them as they're don
 | `API key not found` | Check `.env` exists in the project root with `OPENAI_API_KEY` and `TAVILY_API_KEY` |
 | `KeyError` in a RAG chain | Make sure the prompt's placeholders match the `RunnableParallel` dict keys exactly |
 | Agent returns too few / hedged results | Tighten the system prompt's exclusion rules, or try a stronger model (see Learnings above) |
+| `PineconeApiException: Vector dimension X does not match the dimension of the index Y` | Set `dimensions=Y` on `OpenAIEmbeddings` to match the target Pinecone index's fixed dimension (see `ingestion.py`) |
+| `TypeError: string indices must be integers` from a Tavily tool's result | The tool caught an internal error and returned it as a string instead of raising (`handle_tool_error=True`) — check `isinstance(res, dict)` and print `res` to see the real error |
+| `CERTIFICATE_VERIFY_FAILED` on macOS | Set `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to `certifi.where()` before making any HTTPS calls (see top of `ingestion.py`) |
 
 ---
 
