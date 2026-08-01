@@ -8,7 +8,7 @@ A hands-on learning repository for **LangChain**, working up from chat models an
 
 ## 📚 Overview
 
-Eight standalone, runnable scripts, each isolating one concept:
+Ten standalone, runnable scripts, each isolating one concept:
 
 | Script | Concept |
 |---|---|
@@ -20,6 +20,8 @@ Eight standalone, runnable scripts, each isolating one concept:
 | [tool_calling_manual.py](tool_calling_manual.py) | The same job-search agent with `create_agent` removed — the tool-call loop written by hand |
 | [teach_tool_calling.py](teach_tool_calling.py) | Minimal, single-tool version of the manual loop — isolates what a `ToolCall` dict is for and why `BaseTool.invoke()` needs the whole thing, not just `args` |
 | [tool_calling_manual_pydantic.py](tool_calling_manual_pydantic.py) | Same manual loop, but the tool is a bare Pydantic model, not `@tool` — isolates schema-only binding vs. execution |
+| [teach_react_agent.py](teach_react_agent.py) | Minimal single-tool **ReAct** loop — Thought/Action/Action Input/Observation as a text format the model follows, no `bind_tools` involved |
+| [agent_loop_with_react_prompt.py](agent_loop_with_react_prompt.py) | ReAct loop extended to a real choice between two tools — the prompt lists tool descriptions, and parsing has to recover both the chosen action *and* its input |
 
 ## 📋 Requirements
 
@@ -69,6 +71,8 @@ uv run python tool_calling_with_pydantic_schema.py   # same idea, with structure
 uv run python tool_calling_manual.py                 # the create_agent loop, written by hand
 uv run python teach_tool_calling.py                  # minimal manual loop: ToolCall shape, tool_call_id matching
 uv run python tool_calling_manual_pydantic.py         # same loop, tool defined via bare Pydantic model
+uv run python teach_react_agent.py                   # minimal single-tool ReAct loop (Thought/Action/Observation)
+uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing between two tools
 ```
 
 ---
@@ -85,6 +89,8 @@ uv run python tool_calling_manual_pydantic.py         # same loop, tool defined 
 ├── tool_calling_manual.py                # Same agent, with create_agent's loop written by hand
 ├── teach_tool_calling.py                 # Minimal manual loop: ToolCall shape, tool_call_id matching
 ├── tool_calling_manual_pydantic.py       # Same loop, tool schema as a bare Pydantic model (no @tool)
+├── teach_react_agent.py                  # Minimal single-tool ReAct loop (Thought/Action/Observation)
+├── agent_loop_with_react_prompt.py       # ReAct loop with a real choice between two tools
 ├── pyproject.toml                        # Project metadata and dependencies
 ├── uv.lock                               # Locked dependency versions
 └── .env                                  # Local environment variables (not committed)
@@ -141,6 +147,31 @@ uv run python tool_calling_manual_pydantic.py         # same loop, tool defined 
 - `get_new_jobs(**tool_args)` (unpack into keyword args) vs. `BaseTool.invoke(tool_call)` (pass the whole dict) look similar but solve opposite problems — a plain function needs args spread across its named parameters; `BaseTool.invoke()` wants one object it can pattern-match on. Same `tool_call`/`tool_args`, opposite calling convention
 - Hit the same structural rule OpenAI's API enforces on every manual loop: a `ToolMessage` must directly follow an assistant message containing the matching `tool_calls` id, or the API 400s with `"messages with role 'tool' must be a response to a preceeding message with 'tool_calls'"` — forgetting `messages.append(result)` before appending `ToolMessage`s breaks this
 
+### `teach_react_agent.py` – ReAct, minimal
+- No `bind_tools`, no `create_agent` — the model never sees a tool schema at all. Instead, `PROMPT` spells out a text format (`Thought` / `Action` / `Action Input` / `Observation` / `Final Answer`) and the model is expected to follow it literally
+- `model.invoke(prompt, stop=["\nObservation:"])` cuts generation off right where the model would otherwise hallucinate its own search result — the real observation has to come from actually running Python code, not from the model's imagination
+- The loop: format `PROMPT` with the running `scratchpad` → invoke → if `"Final Answer:"` is in the reply, done → otherwise pull `Action Input` out of the text, call `search_jobs` directly, and append `reply + Observation` onto `scratchpad` so the next prompt includes the full history
+- Only one tool exists, so nothing is actually *chosen* yet — parsing only has to recover the input, never the action name
+
+```mermaid
+flowchart TD
+    A["Format PROMPT\n(question + scratchpad)"] --> B["model.invoke(prompt, stop=['\\nObservation:'])"]
+    B --> C{"'Final Answer:' in reply?"}
+    C -->|yes| D["Print final answer, stop"]
+    C -->|no| E["Parse Action + Action Input\nfrom reply text"]
+    E --> F["Look up Action in TOOLS_BY_NAME\nand call it with Action Input"]
+    F --> G["scratchpad += reply + Observation"]
+    G --> A
+```
+
+### `agent_loop_with_react_prompt.py` – ReAct, real tool choice
+- Two tools this time (`JobSearchTool`, `CompanyInfoTool`), each a Pydantic `BaseModel` used purely to hold a name + description — never bound via `bind_tools`, just read back into the prompt text so the model has something real to choose between
+- `TOOLS_BY_NAME` (name → callable, for dispatch) and `TOOLS_DESCRIPTIONS` (name → description, for the prompt) are kept as two separate dicts — dispatch and "what the model gets told" are different concerns and don't belong in the same structure
+- `tool_names`/`tools` are built once via `", ".join(...)` / `"\n".join(...)` over `TOOLS_DESCRIPTIONS` and injected into `PROMPT`'s `{tool_names}`/`{tools}` placeholders — the model can only pick a tool it's actually been told about
+- Parsing got harder: `Action Input` is still the *last* field before the stop sequence, so `reply.split("Action Input:")[-1].strip()` works unchanged. `Action` is **not** last — `Action Input:` follows it on the next line — so recovering just the action name needs `reply.splitlines()` + `line.startswith("Action:")` to isolate the right line first, then the same split/strip
+- Confirmed the model genuinely chooses: given "find a job at Salesforce, then tell me about Salesforce's culture," it called `JobSearchTool`, judged the result insufficient, and switched to `CompanyInfoTool` on its own — driven only by the descriptions in the prompt
+- Hand-rolled ReAct has no built-in repetition guard the way `create_agent`'s LangGraph loop does — without one, the model sometimes retried an identical `Action`/`Action Input` pair for several steps, apologizing each time, and ran out of its step budget before reaching `Final Answer`. Fixed with two independent changes: an explicit prompt line ("do not repeat an Action with the same Action Input you've already tried") and raising the step budget from 6 to 10
+
 ---
 
 ## 📖 Suggested Learning Path
@@ -153,6 +184,8 @@ uv run python tool_calling_manual_pydantic.py         # same loop, tool defined 
 6. **`tool_calling_manual.py`** – strip away `create_agent` and write the tool-call loop yourself, to see what it was doing
 7. **`teach_tool_calling.py`** – same loop, minimal single-tool version — the one to reread when the `ToolCall` dict / `tool_call_id` mechanics get fuzzy
 8. **`tool_calling_manual_pydantic.py`** – same loop again, but the tool is a bare Pydantic model instead of `@tool` — see what binding buys you (a schema) vs. what it doesn't (execution)
+9. **`teach_react_agent.py`** – switch tracks entirely: no `bind_tools`, a text format the model follows instead — see the ReAct loop mechanics with just one tool
+10. **`agent_loop_with_react_prompt.py`** – same ReAct loop with two tools — see the model actually choose, and see what breaks (and how to fix it) once there's a real choice to parse
 
 ---
 
@@ -173,6 +206,12 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **`bind_tools` only cares about producing valid `tool_calls` — not what defined the schema.** A bare Pydantic class (no `@tool`) binds and produces `tool_calls` with the exact same `{name, args, id, type}` shape as a decorated function. Execution is always on you; `@tool` just also hands you a convenient `.invoke()` to do it with (`tool_calling_manual_pydantic.py`).
 - **Plain functions and `BaseTool` want opposite calling conventions for the same data.** A raw Python function needs its args dict *spread*: `get_new_jobs(**tool_args)`. `BaseTool.invoke()` wants the *whole* `tool_call` dict as one object so it can pattern-match on it internally. Passing a spread dict to `invoke()`, or an unspread dict to a plain function, both fail — just with different errors (`TypeError` vs. a 422 from the API receiving a dict where a string was expected).
 - **OpenAI's "tool must follow tool_calls" rule is a bracket-matching check.** An assistant message with `tool_calls` is the opening bracket for each call id; a `ToolMessage` is the closing bracket. Every manual loop needs `messages.append(result)` (the AIMessage) *before* appending any `ToolMessage`s, or the API 400s on the first tool message it can't match to a preceding open.
+- **ReAct doesn't need `bind_tools` at all.** A plain text format (`Thought`/`Action`/`Action Input`/`Observation`) plus a `stop` sequence plus string parsing reproduces the same request → execute → respond loop as the tool-calling scripts — just driven by string ops on raw text instead of a structured `tool_calls` list.
+- **The `stop` sequence is what keeps a ReAct loop honest.** `model.invoke(prompt, stop=["\nObservation:"])` cuts generation off before the model can write its own fake result. Skip it, and the model happily hallucinates a plausible-looking `Observation:` instead of waiting for the real one.
+- **Pydantic v2 model fields don't exist at the class level.** `MyModel.some_field` raises `AttributeError` even when `some_field` has a `default=` — fields are per-instance data, full stop. To read a field's default (or its `description=`, type, etc.) without instantiating, use `MyModel.model_fields["some_field"].default` — `model_fields` is a dict of `FieldInfo` objects, always available on the class itself.
+- **`ClassVar` is the escape hatch for a genuinely class-level attribute on a `BaseModel`.** `description: ClassVar[str] = "..."` tells Pydantic "don't manage this as a field" — it becomes a normal Python class attribute, readable directly off the class (`MyModel.description`), no instance or `model_fields` lookup needed.
+- **Where a field sits in the text format changes how you parse it.** The *last* field before a `stop` sequence (`Action Input`) can be extracted with `reply.split(label)[-1].strip()` since nothing trails it. A field with something after it on the next line (`Action`, followed by `Action Input`) needs isolating to its own line first (`reply.splitlines()` + `line.startswith(label)`) before the same split/strip — grabbing everything after the label directly would swallow the next field too.
+- **Hand-rolled ReAct loops have no built-in repetition guard.** Unlike `create_agent`'s LangGraph state machine, nothing stops the model from retrying an identical `Action`/`Action Input` pair forever if a search comes back thin — it'll apologize and retry until the step budget runs out. Needs to be handled explicitly: an instruction in the prompt against repeating a tried action, and/or a larger step budget as a backstop.
 
 ---
 
@@ -188,10 +227,14 @@ A living list, not a daily log — check items off or remove them as they're don
 - [ ] **Add streaming** — swap `.invoke(...)` for `.stream(...)` in `tool_calling_manual.py` and print tokens as they arrive; note what has to change to still detect `tool_calls`.
 - [ ] **Re-run `tool_calling.py` on `gpt-4o-mini`** and diff the results against `gpt-4o` to see the rule-following gap firsthand (see Learnings above).
 - [ ] **Skim LangChain's own agent docs** on memory/checkpointing — `create_agent` supports persisting state across runs; the manual versions currently don't.
+- [ ] **Compare the ReAct loop against the `bind_tools` loop head-to-head** — same job-search task through both `agent_loop_with_react_prompt.py` and `tool_calling_manual.py`, and note the real tradeoffs (structured `tool_calls` vs. fragile text parsing; prompt-format compliance vs. schema validation).
+- [ ] **Add a code-level repetition guard to the ReAct loop**, not just a prompt instruction — track seen `(action, action_input)` pairs and short-circuit or force a different approach if the model repeats one, instead of relying on it to follow the "don't repeat" instruction on its own.
 
 **Done**
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
 - [x] **Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
+- [x] **`teach_react_agent.py`** — minimal single-tool ReAct loop built and confirmed working: text-format prompting + `stop=["\nObservation:"]` + string parsing, no `bind_tools` involved.
+- [x] **`agent_loop_with_react_prompt.py`** — extended ReAct to a real two-tool choice: dynamic `{tools}`/`{tool_names}` prompt building, two-stage parsing (action name + action input), Pydantic class-vs-instance field access (`model_fields`), and a repetition guard (prompt instruction + larger step budget) after the model got stuck re-trying the same search.
 
 ---
 
