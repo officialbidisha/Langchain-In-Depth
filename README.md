@@ -220,15 +220,17 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 A living list, not a daily log — check items off or remove them as they're done instead of re-queuing under a new date.
 
 **Next up**
-- [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
-- [ ] **Make the manual tool-call loops actually concurrent** — every `for tool_call in result.tool_calls:` loop so far runs its Tavily searches sequentially even though the model's request for them was parallel; try `asyncio.gather` (with `.ainvoke`) or a thread pool and compare wall-clock time against the sequential version.
-- [ ] **Mix an `@tool` function and a bare Pydantic model in the same `bind_tools([...])` call** — confirm the model can request either shape of tool call in one turn, and that dispatch-by-`tool_name` handles both without special-casing.
-- [ ] **Read the LangGraph basics** — `create_agent` is a thin wrapper around a LangGraph `StateGraph`. Understanding nodes/edges/state directly will explain *why* the loop, message list, and stopping condition look the way they do.
-- [ ] **Add streaming** — swap `.invoke(...)` for `.stream(...)` in `tool_calling_manual.py` and print tokens as they arrive; note what has to change to still detect `tool_calls`.
-- [ ] **Re-run `tool_calling.py` on `gpt-4o-mini`** and diff the results against `gpt-4o` to see the rule-following gap firsthand (see Learnings above).
-- [ ] **Skim LangChain's own agent docs** on memory/checkpointing — `create_agent` supports persisting state across runs; the manual versions currently don't.
+
+*Foundations — do this first, it explains the "why" behind everything below*
+- [ ] **Read the LangGraph basics** — `create_agent` is a thin wrapper around a LangGraph `StateGraph`. Understanding nodes/edges/state/checkpointing directly will explain *why* the loop, message list, stopping condition, and cross-run memory look the way they do.
+
+*ReAct track (`agent_loop_with_react_prompt.py`) — harden, then test, then compare*
+- [ ] **Add a code-level repetition guard**, not just a prompt instruction — track seen `(action, action_input)` pairs and short-circuit or force a different approach if the model repeats one, instead of relying on it to follow the "don't repeat" instruction on its own.
+- [ ] **Try a third tool** — only two have ever been tested; confirm `TOOLS_BY_NAME`/`TOOLS_DESCRIPTIONS`/`PROMPT` actually generalize past two, or find what breaks.
 - [ ] **Compare the ReAct loop against the `bind_tools` loop head-to-head** — same job-search task through both `agent_loop_with_react_prompt.py` and `tool_calling_manual.py`, and note the real tradeoffs (structured `tool_calls` vs. fragile text parsing; prompt-format compliance vs. schema validation).
-- [ ] **Add a code-level repetition guard to the ReAct loop**, not just a prompt instruction — track seen `(action, action_input)` pairs and short-circuit or force a different approach if the model repeats one, instead of relying on it to follow the "don't repeat" instruction on its own.
+
+*Tool-calling track*
+- [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
 
 **Done**
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
