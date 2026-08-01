@@ -48,7 +48,7 @@ TOOLS_DESCRIPTIONS = {
 print(TOOLS_DESCRIPTIONS.items())
 
 scratchpad = "" 
-question = "Find a remote software engineering job at Salesforce, then tell me about Salesforce's culture"
+question = "Find a remote software engineering job , then tell me about Salesforce's culture"
 tool_names = ", ".join(TOOLS_BY_NAME.keys())
 tools = "\n".join(f"{name}: {description}" for name, description in TOOLS_DESCRIPTIONS.items())
 
@@ -90,12 +90,10 @@ for step in range(10):
         print(reply.split("Final Answer:")[-1].strip())
         break
 
-    # TODO: pull out the tool name from `reply` (it's on the "Action:" line),
-    # look it up in TOOLS_BY_NAME, and call it with the Action Input --
-    # instead of always calling search_jobs like teach_react_agent.py does.
-    action_input = reply.split("Action Input:")[-1].strip()
     lines = reply.splitlines()
     for line in lines:
+        if(line.startswith("Action Input:")):
+            action_input = line.split("Action Input:")[-1].strip()
         if(line.startswith("Action:")):
             action_name = line.split("Action:")[-1].strip()
     
