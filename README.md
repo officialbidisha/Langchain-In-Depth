@@ -50,6 +50,7 @@
    - [`tool_calling_manual_pydantic.py`](#tool-calling-manual-pydantic-py) – Schema-only binding, no `@tool`
    - [`teach_react_agent.py`](#teach-react-agent-py) – ReAct, minimal
    - [`agent_loop_with_react_prompt.py`](#agent-loop-with-react-prompt-py) – ReAct, real tool choice
+   - [`backend/core.py`](#backend-core-py) – Retrieval tool, the read side of `ingestion.py`
 6. [Suggested Learning Path](#learning-path)
 7. [Learnings](#learnings)
 8. [Notes for Tomorrow](#notes-for-tomorrow)
@@ -65,7 +66,7 @@
 
 ## 📚 Overview
 
-Eleven standalone, runnable scripts, each isolating one concept:
+Twelve standalone, runnable scripts, each isolating one concept:
 
 | Script | Concept |
 |---|---|
@@ -80,6 +81,7 @@ Eleven standalone, runnable scripts, each isolating one concept:
 | [tool_calling_manual_pydantic.py](tool_calling_manual_pydantic.py) | Same manual loop, but the tool is a bare Pydantic model, not `@tool` — isolates schema-only binding vs. execution |
 | [teach_react_agent.py](teach_react_agent.py) | Minimal single-tool **ReAct** loop — Thought/Action/Action Input/Observation as a text format the model follows, no `bind_tools` involved |
 | [agent_loop_with_react_prompt.py](agent_loop_with_react_prompt.py) | ReAct loop extended to a real choice between two tools — the prompt lists tool descriptions, and parsing has to recover both the chosen action *and* its input |
+| [backend/core.py](backend/core.py) | The read side of RAG: a `retrieve_context` tool that queries `langchain-doc-index` (built by `ingestion.py`) and returns both a serialized string and the raw `Document`s |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -168,6 +170,9 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 ├── tool_calling_manual_pydantic.py       # Same loop, tool schema as a bare Pydantic model (no @tool)
 ├── teach_react_agent.py                  # Minimal single-tool ReAct loop (Thought/Action/Observation)
 ├── agent_loop_with_react_prompt.py       # ReAct loop with a real choice between two tools
+├── backend/
+│   ├── __init__.py
+│   └── core.py                           # retrieve_context tool: queries langchain-doc-index (read side of ingestion.py)
 ├── pyproject.toml                        # Project metadata and dependencies
 ├── uv.lock                               # Locked dependency versions
 └── .env                                  # Local environment variables (not committed)
@@ -184,7 +189,7 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 Each script below is collapsed by default — click a summary line to expand its walkthrough.
 
 > [!CAUTION]
-> `ingestion.py` has an open batching bug that causes duplicate Pinecone upserts — expanded by default below. See [Notes for Tomorrow](#notes-for-tomorrow).
+> One script below has an open bug, expanded by default: `ingestion.py` (duplicate Pinecone upserts). See [Notes for Tomorrow](#notes-for-tomorrow).
 
 <a id="main-py"></a>
 <details>
@@ -344,6 +349,21 @@ flowchart TD
 
 </details>
 
+<a id="backend-core-py"></a>
+<details open>
+<summary><code>backend/core.py</code> – Retrieval tool + RAG agent, the read side of <code>ingestion.py</code></summary>
+
+- The counterpart every prior script was missing: `ingestion.py` only writes into `langchain-doc-index`; `backend/core.py` is the first script that reads from it
+- Same `OpenAIEmbeddings(model="text-embedding-3-large", dimensions=1024)` config as `ingestion.py` — has to match exactly, since a query vector built with different dimensions than the stored vectors can't be compared against them
+- `retrieve_context` is a `@tool(response_format="content_and_artifact")` — that flag makes the tool return a `(content, artifact)` tuple: `content` is the plain string the model sees, `artifact` is the raw `Document` list other code can use directly without re-parsing it back out of text
+- `run_llm(query)` builds the agent that actually uses the tool: `create_agent(model, tools=[retrieve_context], system_prompt=...)` — the tool is passed as the plain `@tool`-decorated function itself, not wrapped in anything; `create_agent` reads its schema straight off it
+- `create_agent(...).invoke({"messages": [...]})` returns a **state dict** (`{"messages": [...]}`), not a `{"content": ...}` shape — the final answer is `response["messages"][-1].content`
+- **Recovering the context, not just the answer**: `response_format="content_and_artifact"` means the `Document`s retrieved mid-run don't just vanish once the model reads them — they're attached as `.artifact` on the `ToolMessage` the agent produces when it calls `retrieve_context`. `run_llm` walks `response["messages"]`, finds that `ToolMessage`, and reshapes its `.artifact` into `{"source": ..., "content": ...}` dicts, so `run_llm` returns `{"answer": ..., "context": [...]}` instead of just the answer — the standard pattern for showing citations in a RAG app without a second, redundant retrieval call
+- Fixed bugs from the first draft: `docs.metadata` → `doc.metadata` (was reading the whole list instead of the loop variable, `AttributeError` on first call); `"Cpntent:"` → `"Content:"` typo; `vectorstore.as_retriever(search_kwargs={"k": 4})` (was passing `k` to `.invoke()`, config now lives with construction); a stray `from langchain_core import system` import (that attribute doesn't exist — `ImportError` on load) and the `system.prompt = ...` assignment it enabled, replaced with a local `system_prompt` string; `tools=[ToolMessage(tool=retrieve_context)]` → `tools=[retrieve_context]` (`ToolMessage` is a tool-*result* message type, not a tool-registration wrapper); dropped `verbose=True`, not a valid `create_agent` kwarg
+- `if __name__ == "__main__":` now actually calls `run_llm` and prints both the answer and the list of source URLs — confirmed working end to end against the real `langchain-doc-index` index
+
+</details>
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
@@ -363,6 +383,7 @@ flowchart TD
 9. **`tool_calling_manual_pydantic.py`** – same loop again, but the tool is a bare Pydantic model instead of `@tool` — see what binding buys you (a schema) vs. what it doesn't (execution)
 10. **`teach_react_agent.py`** – switch tracks entirely: no `bind_tools`, a text format the model follows instead — see the ReAct loop mechanics with just one tool
 11. **`agent_loop_with_react_prompt.py`** – same ReAct loop with two tools — see the model actually choose, and see what breaks (and how to fix it) once there's a real choice to parse
+12. **`backend/core.py`** – close the loop on `ingestion.py`: write the retrieval side of RAG as an actual tool an agent could call, and see why `response_format="content_and_artifact"` needs a two-value return
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -375,7 +396,7 @@ flowchart TD
 Notes from building the tool-calling agents — things that weren't obvious going in.
 
 <details open>
-<summary><b>Click to expand all 28 learnings</b></summary>
+<summary><b>Click to expand all 30 learnings</b></summary>
 
 - **Check the real SDK before wiring a tool to it.** `tavily-python`'s `TavilyClient` only exposes `search`, `extract`, `crawl`, `map`, etc. — there's no `get_job_details` method, so a tool calling it would fail at runtime the moment the agent tried to use it. Use `tavily.extract(url)` to pull full content from a specific posting instead.
 - **`create_agent`'s real kwargs**: it's `response_format` (not `response_schema`) for structured output, and `.invoke()` expects `{"messages": [...]}`, not a bare string.
@@ -405,6 +426,10 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **`vectorstore.aadd_documents` / `TavilyCrawl.ainvoke` are async twins of the sync methods used elsewhere in the repo** (`add_documents` in `index_documents_async`'s earlier sync version, `.invoke()` in `real_rag.py`) — same behavior, just awaitable, which is what lets multiple batches actually overlap in `asyncio.gather` instead of blocking one at a time.
 - **Wrapping each task's body in its own `try/except` is what keeps `asyncio.gather` resilient.** `asyncio.gather` by default re-raises the first exception it sees and cancels the rest of the group. Since each `upsert_batch` already catches and logs its own errors, no exception ever reaches `gather`, so one bad batch can't take down the others.
 - **`range(start, stop)` silently defaults to step `1`, not "reasonable."** Rewriting a sync `for i in range(0, len(split_docs), UPSERT_BATCH_SIZE)` loop into an async batch-builder and dropping the third argument (`range(0, len(documents))`) doesn't error — it just produces a sliding window of overlapping batches instead of disjoint ones, since nothing about `range`'s signature hints that the step was meaningful. Worth double-checking every argument survived a refactor, not just that the code runs (see the known bug in `ingestion.py`'s breakdown above, and Notes for Tomorrow).
+- **A retriever's `k` can be set per-call, not just at construction.** `vectorstore.as_retriever(search_kwargs={"k": 4})` is the pattern most examples show, but `vectorstore.as_retriever().invoke(query, k=4)` also works: `BaseRetriever.invoke`'s source shows it forwards any kwargs it doesn't recognize (like `k`) into `_get_relevant_documents`, which merges them into `search_kwargs` before calling `vectorstore.similarity_search(query, **kwargs)`. Confirmed by reading `langchain_core`'s actual source rather than assuming — it looked like it might be silently ignored, but it isn't (`backend/core.py`).
+- **`@tool(response_format="content_and_artifact")` changes what a tool is allowed to return.** A normal `@tool` returns one value, which becomes the `ToolMessage.content`. With `response_format="content_and_artifact"`, the function must return a `(content, artifact)` tuple instead — `content` is the string the model reads, `artifact` is the raw data (e.g. the actual `Document` list) that other code can use directly without re-parsing it back out of the model-facing text (`backend/core.py`'s `retrieve_context`).
+- **`create_agent(...).invoke(...)` returns a state dict, not a chat response.** The final answer is `response["messages"][-1].content`, not `response["content"]` or `response["answer"]` — `create_agent` builds a LangGraph state graph under the hood, so `.invoke()` returns whatever's in that graph's state, and `messages` is the key that holds the running conversation.
+- **A tool's `artifact` (from `response_format="content_and_artifact"`) survives the whole agent run — it rides along on the `ToolMessage`.** To recover it after `.invoke()`, walk `response["messages"]`, filter for `ToolMessage` instances matching the tool's `name`, and read `.artifact` off each — this is how `backend/core.py`'s `run_llm` returns the actual retrieved `Document`s (for citations) alongside the model's answer, without querying the vector store a second time.
 
 </details>
 
@@ -419,7 +444,7 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 A living list, not a daily log — check items off or remove them as they're done instead of re-queuing under a new date.
 
 > [!IMPORTANT]
-> Top priority: fix the `ingestion.py` batching bug (see below) before running it against the real Pinecone index again.
+> Top priority: fix the `ingestion.py` batching bug before running it against the real Pinecone index again.
 
 ### Next up
 
@@ -436,13 +461,20 @@ A living list, not a daily log — check items off or remove them as they're don
 
 **Ingestion / RAG-on-real-docs track (`ingestion.py`)**
 - [ ] **Fix the batch-building bug in `index_documents_async`** — `for i in range(0, len(documents)):` is missing the `UPSERT_BATCH_SIZE` step (should be `range(0, len(documents), UPSERT_BATCH_SIZE)`), so batches are currently a 100-wide sliding window instead of disjoint groups, and every chunk gets upserted up to 100 times. Fix before running this against the real index again.
-- [ ] **Write the retrieval-side script** that actually queries `langchain-doc-index` (a `PineconeVectorStore.as_retriever()` + LCEL chain, same shape as `real_rag.py`) — ingestion exists, nothing reads from it yet.
 - [ ] **Make ingestion idempotent** — pass explicit deterministic `ids` (e.g. a hash of the URL, or URL + chunk index) to `aadd_documents` so re-running the script upserts-in-place instead of inserting duplicate vectors for the same pages. This would also make the sliding-window bug above harmless (duplicate upserts of the same id just overwrite), but the loop should still be fixed since it's currently doing ~100x more work than intended.
 - [ ] **Decide client-side vs. Pinecone-integrated embedding on purpose.** Right now `ingestion.py` computes embeddings client-side via OpenAI and just happens to match the index's dimension — worth deliberately comparing against using Pinecone's own hosted `llama-text-embed-v2` model directly (no OpenAI embedding call at all) to see the tradeoffs.
 - [ ] **Tune `MAX_CONCURRENT_UPSERTS` (currently 3) and `UPSERT_BATCH_SIZE` (currently 100)** against real Pinecone/OpenAI rate limits once the batching bug above is fixed — these were picked as reasonable defaults, not measured.
 
+**Retrieval track (`backend/core.py`)**
+- [ ] **Expose `run_llm` over an API** — it's a plain function right now; the natural next step is a thin FastAPI/Flask endpoint so the RAG agent can be called over HTTP instead of only from `__main__`.
+- [ ] **Deduplicate `context` in the response** — a single `retrieve_context` call currently returns up to 4 chunks that can share the same `source` URL (see the smoke-test output: 4 sources, all the same page); worth grouping by source or deduping before returning `context` to a caller.
+- [ ] **Handle multi-call queries** — if the agent calls `retrieve_context` more than once in a single run (e.g. it reformulates the query), `run_llm`'s context-extraction loop already accumulates artifacts across every matching `ToolMessage`, but this hasn't been tested against a query that actually triggers a second call.
+
 ### Done
 
+- [x] **`backend/core.py`'s `retrieve_context` bugs fixed and committed** — `doc.metadata` (was `docs.metadata`), the `"Cpntent:"` typo, the bogus `from langchain_core import system` import, `tools=[retrieve_context]` (was wrapped in `ToolMessage(...)`, which is a result type, not a registration wrapper), and the removed `verbose=True` kwarg.
+- [x] **Built the RAG agent** — `run_llm(query)` now wires `retrieve_context` into `create_agent` and calls it from `if __name__ == "__main__":`, closing the read side of the RAG loop end to end against the real `langchain-doc-index` index.
+- [x] **Context/citations in the response** — `run_llm` pulls the `Document` artifact off the agent's `ToolMessage` and returns `{"answer": ..., "context": [{"source", "content"}, ...]}` instead of just the answer text.
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
 - [x] **Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
 - [x] **`teach_react_agent.py`** — minimal single-tool ReAct loop built and confirmed working: text-format prompting + `stop=["\nObservation:"]` + string parsing, no `bind_tools` involved.
