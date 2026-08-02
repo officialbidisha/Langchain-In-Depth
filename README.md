@@ -69,7 +69,7 @@ PINECONE_API_KEY=your-pinecone-api-key-here
 uv run python main.py                              # chat models, prompt templates, and LCEL basics
 uv run python rag-tooling.py                        # RAG pipeline shape using a mocked retriever
 uv run python real_rag.py                           # real RAG: text splitting, embeddings, vector search
-uv run python ingestion.py                          # crawl docs.langchain.com, chunk, embed, upsert into Pinecone
+uv run python ingestion.py                          # crawl docs.langchain.com, chunk, embed, concurrently upsert into Pinecone (async)
 uv run python tool_calling.py                       # tool-calling job-search agent (Tavily search + extract)
 uv run python tool_calling_with_pydantic_schema.py   # same idea, with structured Pydantic output
 uv run python tool_calling_manual.py                 # the create_agent loop, written by hand
@@ -123,14 +123,34 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 
 ### `ingestion.py` – Persistent RAG ingestion pipeline
 - Five-stage pipeline: **Crawl → Extract → Chunk → Embed → Upsert** — a one-time/periodic batch job, entirely separate from any script that later *queries* the index
-- `TavilyCrawl()` does a BFS-style crawl from a root URL (`max_depth` = link-hops from root) and returns extracted page content per URL — no separate scraping code needed
+- The whole script is async now: `main()` and `index_documents_async()` are both `async def`, driven by a single `asyncio.run(main())` at the bottom
+- `TavilyCrawl().ainvoke({...})` does a BFS-style crawl from a root URL (`max_depth` = link-hops from root) and returns extracted page content per URL — no separate scraping code needed
 - `TavilyCrawl` has `handle_tool_error=True` by default: on an internal failure it returns the error as a plain **string** instead of raising, so `res["results"]` must be guarded with `isinstance(res, dict)` or a transient failure surfaces as a confusing `TypeError: string indices must be integers` instead of the real error message
 - Not every crawled URL yields `raw_content` (redirects, non-HTML assets, failed extraction can return `None`) — `Document(page_content=None)` raises a pydantic `ValidationError`, so results are filtered with `if doc.get("raw_content")` before building `Document`s
 - `RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)` splits each page; `split_documents` (as opposed to `split_text`) also propagates each chunk's `metadata={"source": url}` forward, which is what lets a later retriever cite which page an answer came from
 - `OpenAIEmbeddings(model="text-embedding-3-large", dimensions=1024)` — `text-embedding-3-large` natively outputs 3072-dim vectors, but OpenAI v3 embedding models support Matryoshka-style truncation via `dimensions=`. It's pinned to 1024 here because Pinecone indexes have a **fixed** dimension set at creation time, and `langchain-doc-index` was created as a Pinecone-integrated-inference index (bound to `llama-text-embed-v2`, 1024-dim) — the embedding model has to match the index, not the other way around
 - `embeddings`' own `chunk_size=50` is unrelated to the text splitter's `chunk_size=4000` — it's how many texts get batched into one OpenAI embeddings API call (throughput vs. rate-limit tradeoff), not a text length. Two different "chunk sizes" a few lines apart, easy to conflate
-- `vectorstore.add_documents(split_docs)` does the actual embed-then-upsert in one call: `embeddings.embed_documents(...)` for vectors, then a Pinecone upsert of `(vector, metadata)` per chunk
-- No explicit `ids` are passed to `add_documents`, so re-running the script against the same URLs inserts duplicate vectors rather than upserting-in-place — not yet idempotent (see Notes for Tomorrow)
+- `index_documents_async()` splits `split_docs` into `UPSERT_BATCH_SIZE`-sized groups, then fires off one `vectorstore.aadd_documents(batch)` task per group through `asyncio.gather(*tasks)` — batches upsert concurrently instead of one at a time
+- An `asyncio.Semaphore(MAX_CONCURRENT_UPSERTS)` wraps each `upsert_batch` coroutine, so all batches are *created* up front but only `MAX_CONCURRENT_UPSERTS` (3) run against Pinecone at once — the rest wait on the semaphore before starting
+- Each batch's `aadd_documents` call is wrapped in its own `try/except`, so one failed batch is logged and skipped instead of `asyncio.gather` aborting every other in-flight batch
+- ⚠️ **Known bug**: the batch-building loop is `for i in range(0, len(documents)): batches.append(documents[i:i+UPSERT_BATCH_SIZE])` — missing the `UPSERT_BATCH_SIZE` step argument that the pre-async version had (`range(0, len(split_docs), UPSERT_BATCH_SIZE)`). With the default step of 1, `i` advances one document at a time, so batches are a 100-wide *sliding window* instead of 100 disjoint groups — every chunk gets upserted up to 100 times. See Notes for Tomorrow.
+- No explicit `ids` are passed to `aadd_documents` either, so re-running the script against the same URLs inserts duplicate vectors rather than upserting-in-place — not yet idempotent (see Notes for Tomorrow)
+
+```mermaid
+flowchart TD
+    A["TavilyCrawl().ainvoke(url, max_depth=2)"] --> B["Filter: keep docs\nwith raw_content"]
+    B --> C["RecursiveCharacterTextSplitter\nchunk_size=4000, overlap=200"]
+    C --> D["index_documents_async(split_docs)"]
+    D --> E["Group into UPSERT_BATCH_SIZE\nbatches ⚠️ see known bug above"]
+    E --> F["asyncio.Semaphore(MAX_CONCURRENT_UPSERTS=3)"]
+    F --> G1["vectorstore.aadd_documents(batch 1)"]
+    F --> G2["vectorstore.aadd_documents(batch 2)"]
+    F --> G3["vectorstore.aadd_documents(batch N)"]
+    G1 --> H["asyncio.gather(*tasks)"]
+    G2 --> H
+    G3 --> H
+    H --> I["Finished ingesting\ndocuments into Pinecone"]
+```
 
 ### `tool_calling.py` – Agent with a strict system prompt
 - Two tools: `get_jobs` (Tavily search) and `get_job_details` (Tavily `extract`, to pull full posting content)
@@ -234,6 +254,10 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **Tools with `handle_tool_error=True` (the default on many built-in LangChain tools, including `TavilyCrawl`) don't raise on failure — they return the error as a string.** Indexing into that string like it's still the expected dict (`res["results"]`) produces a misleading `TypeError: string indices must be integers` that hides the real underlying error. Always safe to check `isinstance(res, dict)` before trusting a tool's return shape.
 - **A web crawl's results aren't uniformly usable.** Some crawled URLs return `raw_content: None` (redirects, non-HTML assets, failed extraction). `Document(page_content=None)` raises a pydantic `ValidationError` since `page_content` is a required string — filter with `if doc.get("raw_content")` before constructing `Document`s.
 - **macOS + `uv`/non-system Python builds can fail HTTPS calls with `CERTIFICATE_VERIFY_FAILED`** because the interpreter's `ssl` module doesn't always pick up the OS's trusted CA bundle. Pointing both `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` at `certifi.where()` (before any HTTPS-calling library is used) fixes it for both the stdlib `ssl` module and `requests`-based clients.
+- **A `Semaphore` limits concurrency without limiting how many tasks get created.** `index_documents_async` still builds *all* batch coroutines and hands them to `asyncio.gather` at once — the `asyncio.Semaphore(MAX_CONCURRENT_UPSERTS)` acquired inside each task is what actually throttles how many run against Pinecone simultaneously, by making the rest await entry into the `async with semaphore:` block until a slot frees up.
+- **`vectorstore.aadd_documents` / `TavilyCrawl.ainvoke` are async twins of the sync methods used elsewhere in the repo** (`add_documents` in `index_documents_async`'s earlier sync version, `.invoke()` in `real_rag.py`) — same behavior, just awaitable, which is what lets multiple batches actually overlap in `asyncio.gather` instead of blocking one at a time.
+- **Wrapping each task's body in its own `try/except` is what keeps `asyncio.gather` resilient.** `asyncio.gather` by default re-raises the first exception it sees and cancels the rest of the group. Since each `upsert_batch` already catches and logs its own errors, no exception ever reaches `gather`, so one bad batch can't take down the others.
+- **`range(start, stop)` silently defaults to step `1`, not "reasonable."** Rewriting a sync `for i in range(0, len(split_docs), UPSERT_BATCH_SIZE)` loop into an async batch-builder and dropping the third argument (`range(0, len(documents))`) doesn't error — it just produces a sliding window of overlapping batches instead of disjoint ones, since nothing about `range`'s signature hints that the step was meaningful. Worth double-checking every argument survived a refactor, not just that the code runs (see the known bug in `ingestion.py`'s breakdown above, and Notes for Tomorrow).
 
 ---
 
@@ -255,9 +279,11 @@ A living list, not a daily log — check items off or remove them as they're don
 - [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
 
 *Ingestion / RAG-on-real-docs track (`ingestion.py`)*
+- [ ] **Fix the batch-building bug in `index_documents_async`** — `for i in range(0, len(documents)):` is missing the `UPSERT_BATCH_SIZE` step (should be `range(0, len(documents), UPSERT_BATCH_SIZE)`), so batches are currently a 100-wide sliding window instead of disjoint groups, and every chunk gets upserted up to 100 times. Fix before running this against the real index again.
 - [ ] **Write the retrieval-side script** that actually queries `langchain-doc-index` (a `PineconeVectorStore.as_retriever()` + LCEL chain, same shape as `real_rag.py`) — ingestion exists, nothing reads from it yet.
-- [ ] **Make ingestion idempotent** — pass explicit deterministic `ids` (e.g. a hash of the URL, or URL + chunk index) to `add_documents` so re-running the script upserts-in-place instead of inserting duplicate vectors for the same pages.
+- [ ] **Make ingestion idempotent** — pass explicit deterministic `ids` (e.g. a hash of the URL, or URL + chunk index) to `aadd_documents` so re-running the script upserts-in-place instead of inserting duplicate vectors for the same pages. This would also make the sliding-window bug above harmless (duplicate upserts of the same id just overwrite), but the loop should still be fixed since it's currently doing ~100x more work than intended.
 - [ ] **Decide client-side vs. Pinecone-integrated embedding on purpose.** Right now `ingestion.py` computes embeddings client-side via OpenAI and just happens to match the index's dimension — worth deliberately comparing against using Pinecone's own hosted `llama-text-embed-v2` model directly (no OpenAI embedding call at all) to see the tradeoffs.
+- [ ] **Tune `MAX_CONCURRENT_UPSERTS` (currently 3) and `UPSERT_BATCH_SIZE` (currently 100)** against real Pinecone/OpenAI rate limits once the batching bug above is fixed — these were picked as reasonable defaults, not measured.
 
 **Done**
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
