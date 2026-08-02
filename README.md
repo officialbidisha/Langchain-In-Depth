@@ -1,8 +1,10 @@
 <a id="readme-top"></a>
 
-<div align="center">
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=170&section=header&text=LangChain-In-Depth&fontSize=40&fontColor=ffffff&fontAlignY=34&animation=fadeIn&desc=Hands-on%20LangChain%2C%20one%20concept%20per%20script&descAlignY=58&descSize=16" width="100%" alt="LangChain-In-Depth banner" />
+</p>
 
-# 🦜 LangChain-In-Depth
+<div align="center">
 
 <em>A hands-on learning repo for <b>LangChain</b> — from chat models and LCEL chains to retrieval-augmented generation (RAG) and tool-calling agents, one concept per script.</em>
 
@@ -14,11 +16,18 @@
 [![LangChain](https://img.shields.io/badge/built%20with-LangChain-1C3C3C?style=for-the-badge)](https://python.langchain.com/)
 [![Status](https://img.shields.io/badge/status-personal%20learning%20project-yellow?style=for-the-badge)](#notes-for-tomorrow)
 
+<br />
+
+[![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/)
+[![Tavily](https://img.shields.io/badge/Tavily-2A9D8F?style=flat-square)](https://tavily.com/)
+[![Pinecone](https://img.shields.io/badge/Pinecone-0B3D2E?style=flat-square)](https://www.pinecone.io/)
+[![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=flat-square&logo=pydantic&logoColor=white)](https://docs.pydantic.dev/)
+[![Mermaid](https://img.shields.io/badge/Diagrams-Mermaid-FF6B6B?style=flat-square&logo=mermaid&logoColor=white)](https://mermaid.js.org/)
+
 </div>
 
-<p align="center">
-  <b>🎯 Perfect for:</b> developers learning LangChain step by step, using each script as a standalone reference for one concept.
-</p>
+> [!TIP]
+> **Perfect for:** developers learning LangChain step by step — each script is a standalone reference for exactly one concept.
 
 ---
 
@@ -119,7 +128,8 @@ TAVILY_API_KEY=your-tavily-api-key-here
 PINECONE_API_KEY=your-pinecone-api-key-here
 ```
 
-> ⚠️ **Never commit `.env`** – it's already in `.gitignore`
+> [!WARNING]
+> Never commit `.env` — it's already in `.gitignore`.
 
 ### 4. Run examples
 
@@ -172,6 +182,9 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 ## 🔍 Example Breakdown
 
 Each script below is collapsed by default — click a summary line to expand its walkthrough.
+
+> [!CAUTION]
+> `ingestion.py` has an open batching bug that causes duplicate Pinecone upserts — expanded by default below. See [Notes for Tomorrow](#notes-for-tomorrow).
 
 <a id="main-py"></a>
 <details>
@@ -405,6 +418,9 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 
 A living list, not a daily log — check items off or remove them as they're done instead of re-queuing under a new date.
 
+> [!IMPORTANT]
+> Top priority: fix the `ingestion.py` batching bug (see below) before running it against the real Pinecone index again.
+
 ### Next up
 
 **Foundations — do this first, it explains the "why" behind everything below**
@@ -475,3 +491,7 @@ A living list, not a daily log — check items off or remove them as they're don
 Distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer" width="100%" alt="footer banner" />
+</p>
