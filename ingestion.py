@@ -10,6 +10,8 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_tavily import TavilyCrawl
 
+MAX_CONCURRENT_UPSERTS = 3  # cap concurrent requests hitting Pinecone at once
+
 
 load_dotenv()
 
@@ -46,14 +48,11 @@ async def main():
     })
 
     all_docs = res.get("results", [])
-    print(f"Total documents extracted: {len(all_docs)}")
-
-    documents = [
-        Document(page_content=doc["raw_content"], metadata={"source": doc["url"]})
-        for doc in all_docs
-        if doc.get("raw_content")
-    ]
-
+    documents = []
+    for doc in all_docs:
+        if doc.get("raw_content"):
+            formatted_doc = Document(page_content=doc.get("raw_content"), metadata={"source": doc.get("url")})
+            documents.append(formatted_doc)
     if not documents:
         print("No documents with content were extracted. Exiting.")
         return
@@ -61,16 +60,31 @@ async def main():
     split_docs = text_splitter.split_documents(documents)
     print(f"Total chunks to embed: {len(split_docs)}")
 
-    for i in range(0, len(split_docs), UPSERT_BATCH_SIZE):
-        batch = split_docs[i : i + UPSERT_BATCH_SIZE]
-        try:
-            vectorstore.add_documents(batch)
-            print(f"Upserted batch {i // UPSERT_BATCH_SIZE + 1} "
-                  f"({len(batch)} chunks, {i + len(batch)}/{len(split_docs)} total)")
-        except Exception as e:
-            print(f"Failed to upsert batch starting at index {i}: {e}")
-
+    await index_documents_async(split_docs)
     print("Finished ingesting documents into Pinecone.")
+
+
+async def index_documents_async(documents):
+    """Split documents into batches and upsert them into Pinecone concurrently."""
+    batches = []
+    for i in range(0, len(documents)):
+        batches.append(documents[i: i+UPSERT_BATCH_SIZE])
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_UPSERTS)
+
+    async def upsert_batch(batch, batch_num):
+        async with semaphore:
+            try:
+                await vectorstore.aadd_documents(batch)
+                print(f"Upserted batch {batch_num}/{len(batches)} ({len(batch)} chunks)")
+            except Exception as e:
+                print(f"Failed to upsert batch {batch_num}/{len(batches)}: {e}")
+
+    tasks = []
+    for i, batch in enumerate(batches):
+        tasks.append(upsert_batch(batch, i+1))
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
