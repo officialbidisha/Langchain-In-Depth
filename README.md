@@ -1,10 +1,58 @@
+<a id="readme-top"></a>
+
+<div align="center">
+
 # 🦜 LangChain-In-Depth
 
-A hands-on learning repository for **LangChain**, working up from chat models and LCEL chains to retrieval-augmented generation (RAG) and tool-calling agents.
+<em>A hands-on learning repo for <b>LangChain</b> — from chat models and LCEL chains to retrieval-augmented generation (RAG) and tool-calling agents, one concept per script.</em>
 
-> **Perfect for**: developers learning LangChain step by step, using each script as a standalone reference for one concept.
+<br /><br />
+
+[![License](https://img.shields.io/github/license/officialbidisha/Langchain-In-Depth?style=for-the-badge)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![uv](https://img.shields.io/badge/managed%20with-uv-DE5FE9?style=for-the-badge)](https://docs.astral.sh/uv/)
+[![LangChain](https://img.shields.io/badge/built%20with-LangChain-1C3C3C?style=for-the-badge)](https://python.langchain.com/)
+[![Status](https://img.shields.io/badge/status-personal%20learning%20project-yellow?style=for-the-badge)](#notes-for-tomorrow)
+
+</div>
+
+<p align="center">
+  <b>🎯 Perfect for:</b> developers learning LangChain step by step, using each script as a standalone reference for one concept.
+</p>
 
 ---
+
+<details>
+<summary><b>📋 Table of Contents</b></summary>
+
+1. [Overview](#overview)
+2. [Requirements](#requirements)
+3. [Quick Start](#quick-start)
+4. [Project Structure](#project-structure)
+5. [Example Breakdown](#example-breakdown)
+   - [`main.py`](#main-py) – Foundations
+   - [`rag-tooling.py`](#rag-tooling-py) – RAG shape, no external calls
+   - [`real_rag.py`](#real-rag-py) – Production RAG
+   - [`ingestion.py`](#ingestion-py) – Persistent RAG ingestion pipeline
+   - [`tool_calling.py`](#tool-calling-py) – Agent with a strict system prompt
+   - [`tool_calling_with_pydantic_schema.py`](#tool-calling-with-pydantic-schema-py) – Structured output
+   - [`tool_calling_manual.py`](#tool-calling-manual-py) – `create_agent`, unwrapped
+   - [`teach_tool_calling.py`](#teach-tool-calling-py) – The `ToolCall` shape, isolated
+   - [`tool_calling_manual_pydantic.py`](#tool-calling-manual-pydantic-py) – Schema-only binding, no `@tool`
+   - [`teach_react_agent.py`](#teach-react-agent-py) – ReAct, minimal
+   - [`agent_loop_with_react_prompt.py`](#agent-loop-with-react-prompt-py) – ReAct, real tool choice
+6. [Suggested Learning Path](#learning-path)
+7. [Learnings](#learnings)
+8. [Notes for Tomorrow](#notes-for-tomorrow)
+9. [Troubleshooting](#troubleshooting)
+10. [Resources](#resources)
+11. [License](#license)
+
+</details>
+
+---
+
+<a id="overview"></a>
 
 ## 📚 Overview
 
@@ -24,6 +72,12 @@ Eleven standalone, runnable scripts, each isolating one concept:
 | [teach_react_agent.py](teach_react_agent.py) | Minimal single-tool **ReAct** loop — Thought/Action/Action Input/Observation as a text format the model follows, no `bind_tools` involved |
 | [agent_loop_with_react_prompt.py](agent_loop_with_react_prompt.py) | ReAct loop extended to a real choice between two tools — the prompt lists tool descriptions, and parsing has to recover both the chosen action *and* its input |
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+<a id="requirements"></a>
+
 ## 📋 Requirements
 
 - **Python 3.10+**
@@ -34,7 +88,11 @@ Eleven standalone, runnable scripts, each isolating one concept:
 
 Dependency management and locking are handled via `uv` (see [pyproject.toml](pyproject.toml) / [uv.lock](uv.lock)).
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="quick-start"></a>
 
 ## 🚀 Quick Start
 
@@ -79,7 +137,11 @@ uv run python teach_react_agent.py                   # minimal single-tool ReAct
 uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing between two tools
 ```
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="project-structure"></a>
 
 ## 📁 Project Structure
 
@@ -101,27 +163,51 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 └── .env                                  # Local environment variables (not committed)
 ```
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="example-breakdown"></a>
 
 ## 🔍 Example Breakdown
 
-### `main.py` – Foundations
+Each script below is collapsed by default — click a summary line to expand its walkthrough.
+
+<a id="main-py"></a>
+<details>
+<summary><code>main.py</code> – Foundations</summary>
+
 - Initialize a chat model (`ChatOpenAI`)
 - Send `SystemMessage` / `HumanMessage` / `AIMessage` for multi-turn conversation
 - Build a first LCEL chain: `prompt | model | parser`
 
-### `rag-tooling.py` – RAG shape, no external calls
+</details>
+
+<a id="rag-tooling-py"></a>
+<details>
+<summary><code>rag-tooling.py</code> – RAG shape, no external calls</summary>
+
 - A `FakeRetriever` stands in for a real vector store, so the chain's *shape* can be studied without hitting an API
 - `RunnableParallel` runs two branches on the same input: one formats retrieved docs into context, the other passes the question through untouched
 - The prompt's `{context}` / `{question}` placeholders must match the `RunnableParallel` dict keys exactly, or the chain raises `KeyError` at runtime
 
-### `real_rag.py` – Production RAG
+</details>
+
+<a id="real-rag-py"></a>
+<details>
+<summary><code>real_rag.py</code> – Production RAG</summary>
+
 - `RecursiveCharacterTextSplitter` chunks a raw text blob
 - `OpenAIEmbeddings` embeds each chunk into `InMemoryVectorStore`
 - `vectorstore.as_retriever()` performs real cosine-similarity search
 - Same `RunnableParallel → prompt → model → parser` shape as `rag-tooling.py`, now backed by real retrieval
 
-### `ingestion.py` – Persistent RAG ingestion pipeline
+</details>
+
+<a id="ingestion-py"></a>
+<details open>
+<summary><code>ingestion.py</code> – Persistent RAG ingestion pipeline</summary>
+
 - Five-stage pipeline: **Crawl → Extract → Chunk → Embed → Upsert** — a one-time/periodic batch job, entirely separate from any script that later *queries* the index
 - The whole script is async now: `main()` and `index_documents_async()` are both `async def`, driven by a single `asyncio.run(main())` at the bottom
 - `TavilyCrawl().ainvoke({...})` does a BFS-style crawl from a root URL (`max_depth` = link-hops from root) and returns extracted page content per URL — no separate scraping code needed
@@ -133,8 +219,8 @@ uv run python agent_loop_with_react_prompt.py         # ReAct loop choosing betw
 - `index_documents_async()` splits `split_docs` into `UPSERT_BATCH_SIZE`-sized groups, then fires off one `vectorstore.aadd_documents(batch)` task per group through `asyncio.gather(*tasks)` — batches upsert concurrently instead of one at a time
 - An `asyncio.Semaphore(MAX_CONCURRENT_UPSERTS)` wraps each `upsert_batch` coroutine, so all batches are *created* up front but only `MAX_CONCURRENT_UPSERTS` (3) run against Pinecone at once — the rest wait on the semaphore before starting
 - Each batch's `aadd_documents` call is wrapped in its own `try/except`, so one failed batch is logged and skipped instead of `asyncio.gather` aborting every other in-flight batch
-- ⚠️ **Known bug**: the batch-building loop is `for i in range(0, len(documents)): batches.append(documents[i:i+UPSERT_BATCH_SIZE])` — missing the `UPSERT_BATCH_SIZE` step argument that the pre-async version had (`range(0, len(split_docs), UPSERT_BATCH_SIZE)`). With the default step of 1, `i` advances one document at a time, so batches are a 100-wide *sliding window* instead of 100 disjoint groups — every chunk gets upserted up to 100 times. See Notes for Tomorrow.
-- No explicit `ids` are passed to `aadd_documents` either, so re-running the script against the same URLs inserts duplicate vectors rather than upserting-in-place — not yet idempotent (see Notes for Tomorrow)
+- ⚠️ **Known bug**: the batch-building loop is `for i in range(0, len(documents)): batches.append(documents[i:i+UPSERT_BATCH_SIZE])` — missing the `UPSERT_BATCH_SIZE` step argument that the pre-async version had (`range(0, len(split_docs), UPSERT_BATCH_SIZE)`). With the default step of 1, `i` advances one document at a time, so batches are a 100-wide *sliding window* instead of 100 disjoint groups — every chunk gets upserted up to 100 times. See [Notes for Tomorrow](#notes-for-tomorrow).
+- No explicit `ids` are passed to `aadd_documents` either, so re-running the script against the same URLs inserts duplicate vectors rather than upserting-in-place — not yet idempotent (see [Notes for Tomorrow](#notes-for-tomorrow))
 
 ```mermaid
 flowchart TD
@@ -152,38 +238,68 @@ flowchart TD
     H --> I["Finished ingesting\ndocuments into Pinecone"]
 ```
 
-### `tool_calling.py` – Agent with a strict system prompt
+</details>
+
+<a id="tool-calling-py"></a>
+<details>
+<summary><code>tool_calling.py</code> – Agent with a strict system prompt</summary>
+
 - Two tools: `get_jobs` (Tavily search) and `get_job_details` (Tavily `extract`, to pull full posting content)
 - `create_agent(model, tools=[...], system_prompt=...)` builds the agent
 - The system prompt encodes hard verification rules (explicit LangChain/LangGraph/LangSmith mention, explicit remote status, explicit India eligibility) so the agent can't hedge its way to a target count
 - Output is the raw agent message trace, printed via `message.pretty_print()`
 
-### `tool_calling_with_pydantic_schema.py` – Structured output
+</details>
+
+<a id="tool-calling-with-pydantic-schema-py"></a>
+<details>
+<summary><code>tool_calling_with_pydantic_schema.py</code> – Structured output</summary>
+
 - Same job-search idea, single `get_new_jobs(query: str)` tool with a free-form query
 - `response_format=AgentResponse` (a Pydantic model) makes `create_agent` return `result["structured_response"]` as a typed `AgentResponse` instead of free text
 - `Job` / `AgentResponse` Pydantic models define the exact shape (title, company, location, url) the agent must fill in
 
-### `tool_calling_manual.py` – `create_agent`, unwrapped
+</details>
+
+<a id="tool-calling-manual-py"></a>
+<details>
+<summary><code>tool_calling_manual.py</code> – <code>create_agent</code>, unwrapped</summary>
+
 - Same two tools and equivalent rules as `tool_calling.py`, but no `create_agent` — `model.bind_tools(TOOLS)` plus a hand-written loop
 - The loop: call the model → if `response.tool_calls` is non-empty, run each tool and append a `ToolMessage` (matched back via `tool_call_id`) → call the model again → repeat until no tool calls remain
 - A `MAX_STEPS` cap guards against the loop never terminating — the same kind of recursion limit `create_agent`/LangGraph applies internally
 - Shows exactly what `create_agent` buys you: this version has no built-in `response_format` coercion, streaming, or checkpointing
 
-### `teach_tool_calling.py` – The `ToolCall` shape, isolated
+</details>
+
+<a id="teach-tool-calling-py"></a>
+<details>
+<summary><code>teach_tool_calling.py</code> – The <code>ToolCall</code> shape, isolated</summary>
+
 - One tool (`get_new_jobs`), no system prompt engineering — strips away agent behavior to focus purely on the request/execute/respond mechanics
 - A single `HumanMessage` produced one `AIMessage` with **4** `tool_calls` (Meta, Google, Salesforce, Uber) — the model batches independent lookups into one turn instead of asking one at a time
 - `BaseTool.invoke()` branches on its input's shape (see `_prep_run_args` in `langchain_core/tools/base.py`): pass just `tool_call["args"]` and you get the tool's raw return value; pass the **whole** `tool_call` dict (`{name, args, id, type}`) and it unwraps `args` to run the function, then wraps the output in a `ToolMessage` tagged with `tool_call_id`
 - That `tool_call_id` tag is the only thing letting 4 parallel requests in one AI turn get matched back to their 4 correct answers once the message list is sent back to the model
 - The `for tool_call in result.tool_calls:` loop that runs the tools is sequential in your code (each Tavily call blocks before the next starts) even though the model's *request* for them was parallel — "parallel in the API's eyes" and "concurrent in your code" are different things
 
-### `tool_calling_manual_pydantic.py` – Schema-only binding, no `@tool`
+</details>
+
+<a id="tool-calling-manual-pydantic-py"></a>
+<details>
+<summary><code>tool_calling_manual_pydantic.py</code> – Schema-only binding, no <code>@tool</code></summary>
+
 - `GetNewJobs(BaseModel)` defines only the input schema (fields + docstring) — no function body, no execution logic attached
 - `bind_tools([GetNewJobs])` accepts the Pydantic **class** directly; the resulting `result.tool_calls` has the identical `{name, args, id, type}` shape as `teach_tool_calling.py`'s `@tool`-based version — `bind_tools` doesn't care what shape the schema came from
 - Because there's no `BaseTool`, there's no `.invoke()` and no automatic `ToolMessage` wrapping — both are written by hand: route `tool_call["name"]` to the real `get_new_jobs()` function, call it with `**tool_call["args"]`, then manually build `ToolMessage(content=..., tool_call_id=tool_call["id"])`
 - `get_new_jobs(**tool_args)` (unpack into keyword args) vs. `BaseTool.invoke(tool_call)` (pass the whole dict) look similar but solve opposite problems — a plain function needs args spread across its named parameters; `BaseTool.invoke()` wants one object it can pattern-match on. Same `tool_call`/`tool_args`, opposite calling convention
 - Hit the same structural rule OpenAI's API enforces on every manual loop: a `ToolMessage` must directly follow an assistant message containing the matching `tool_calls` id, or the API 400s with `"messages with role 'tool' must be a response to a preceeding message with 'tool_calls'"` — forgetting `messages.append(result)` before appending `ToolMessage`s breaks this
 
-### `teach_react_agent.py` – ReAct, minimal
+</details>
+
+<a id="teach-react-agent-py"></a>
+<details>
+<summary><code>teach_react_agent.py</code> – ReAct, minimal</summary>
+
 - No `bind_tools`, no `create_agent` — the model never sees a tool schema at all. Instead, `PROMPT` spells out a text format (`Thought` / `Action` / `Action Input` / `Observation` / `Final Answer`) and the model is expected to follow it literally
 - `model.invoke(prompt, stop=["\nObservation:"])` cuts generation off right where the model would otherwise hallucinate its own search result — the real observation has to come from actually running Python code, not from the model's imagination
 - The loop: format `PROMPT` with the running `scratchpad` → invoke → if `"Final Answer:"` is in the reply, done → otherwise pull `Action Input` out of the text, call `search_jobs` directly, and append `reply + Observation` onto `scratchpad` so the next prompt includes the full history
@@ -200,7 +316,12 @@ flowchart TD
     G --> A
 ```
 
-### `agent_loop_with_react_prompt.py` – ReAct, real tool choice
+</details>
+
+<a id="agent-loop-with-react-prompt-py"></a>
+<details>
+<summary><code>agent_loop_with_react_prompt.py</code> – ReAct, real tool choice</summary>
+
 - Two tools this time (`JobSearchTool`, `CompanyInfoTool`), each a Pydantic `BaseModel` used purely to hold a name + description — never bound via `bind_tools`, just read back into the prompt text so the model has something real to choose between
 - `TOOLS_BY_NAME` (name → callable, for dispatch) and `TOOLS_DESCRIPTIONS` (name → description, for the prompt) are kept as two separate dicts — dispatch and "what the model gets told" are different concerns and don't belong in the same structure
 - `tool_names`/`tools` are built once via `", ".join(...)` / `"\n".join(...)` over `TOOLS_DESCRIPTIONS` and injected into `PROMPT`'s `{tool_names}`/`{tools}` placeholders — the model can only pick a tool it's actually been told about
@@ -208,7 +329,13 @@ flowchart TD
 - Confirmed the model genuinely chooses: given "find a job at Salesforce, then tell me about Salesforce's culture," it called `JobSearchTool`, judged the result insufficient, and switched to `CompanyInfoTool` on its own — driven only by the descriptions in the prompt
 - Hand-rolled ReAct has no built-in repetition guard the way `create_agent`'s LangGraph loop does — without one, the model sometimes retried an identical `Action`/`Action Input` pair for several steps, apologizing each time, and ran out of its step budget before reaching `Final Answer`. Fixed with two independent changes: an explicit prompt line ("do not repeat an Action with the same Action Input you've already tried") and raising the step budget from 6 to 10
 
+</details>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="learning-path"></a>
 
 ## 📖 Suggested Learning Path
 
@@ -224,11 +351,18 @@ flowchart TD
 10. **`teach_react_agent.py`** – switch tracks entirely: no `bind_tools`, a text format the model follows instead — see the ReAct loop mechanics with just one tool
 11. **`agent_loop_with_react_prompt.py`** – same ReAct loop with two tools — see the model actually choose, and see what breaks (and how to fix it) once there's a real choice to parse
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="learnings"></a>
 
 ## 💡 Learnings
 
-Notes from building the tool-calling agents — things that weren't obvious going in:
+Notes from building the tool-calling agents — things that weren't obvious going in.
+
+<details open>
+<summary><b>Click to expand all 28 learnings</b></summary>
 
 - **Check the real SDK before wiring a tool to it.** `tavily-python`'s `TavilyClient` only exposes `search`, `extract`, `crawl`, `map`, etc. — there's no `get_job_details` method, so a tool calling it would fail at runtime the moment the agent tried to use it. Use `tavily.extract(url)` to pull full content from a specific posting instead.
 - **`create_agent`'s real kwargs**: it's `response_format` (not `response_schema`) for structured output, and `.invoke()` expects `{"messages": [...]}`, not a bare string.
@@ -259,39 +393,50 @@ Notes from building the tool-calling agents — things that weren't obvious goin
 - **Wrapping each task's body in its own `try/except` is what keeps `asyncio.gather` resilient.** `asyncio.gather` by default re-raises the first exception it sees and cancels the rest of the group. Since each `upsert_batch` already catches and logs its own errors, no exception ever reaches `gather`, so one bad batch can't take down the others.
 - **`range(start, stop)` silently defaults to step `1`, not "reasonable."** Rewriting a sync `for i in range(0, len(split_docs), UPSERT_BATCH_SIZE)` loop into an async batch-builder and dropping the third argument (`range(0, len(documents))`) doesn't error — it just produces a sliding window of overlapping batches instead of disjoint ones, since nothing about `range`'s signature hints that the step was meaningful. Worth double-checking every argument survived a refactor, not just that the code runs (see the known bug in `ingestion.py`'s breakdown above, and Notes for Tomorrow).
 
+</details>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="notes-for-tomorrow"></a>
 
 ## 🗒️ Notes for Tomorrow
 
 A living list, not a daily log — check items off or remove them as they're done instead of re-queuing under a new date.
 
-**Next up**
+### Next up
 
-*Foundations — do this first, it explains the "why" behind everything below*
+**Foundations — do this first, it explains the "why" behind everything below**
 - [ ] **Read the LangGraph basics** — `create_agent` is a thin wrapper around a LangGraph `StateGraph`. Understanding nodes/edges/state/checkpointing directly will explain *why* the loop, message list, stopping condition, and cross-run memory look the way they do.
 
-*ReAct track (`agent_loop_with_react_prompt.py`) — harden, then test, then compare*
+**ReAct track (`agent_loop_with_react_prompt.py`) — harden, then test, then compare**
 - [ ] **Add a code-level repetition guard**, not just a prompt instruction — track seen `(action, action_input)` pairs and short-circuit or force a different approach if the model repeats one, instead of relying on it to follow the "don't repeat" instruction on its own.
 - [ ] **Try a third tool** — only two have ever been tested; confirm `TOOLS_BY_NAME`/`TOOLS_DESCRIPTIONS`/`PROMPT` actually generalize past two, or find what breaks.
 - [ ] **Compare the ReAct loop against the `bind_tools` loop head-to-head** — same job-search task through both `agent_loop_with_react_prompt.py` and `tool_calling_manual.py`, and note the real tradeoffs (structured `tool_calls` vs. fragile text parsing; prompt-format compliance vs. schema validation).
 
-*Tool-calling track*
+**Tool-calling track**
 - [ ] **Add structured output by hand** to `tool_calling_manual.py` and `tool_calling_manual_pydantic.py` — once each loop ends, pass the final answer through `model.with_structured_output(AgentResponse)` (or a second call) and compare to what `response_format=` does automatically in `tool_calling_with_pydantic_schema.py`.
 
-*Ingestion / RAG-on-real-docs track (`ingestion.py`)*
+**Ingestion / RAG-on-real-docs track (`ingestion.py`)**
 - [ ] **Fix the batch-building bug in `index_documents_async`** — `for i in range(0, len(documents)):` is missing the `UPSERT_BATCH_SIZE` step (should be `range(0, len(documents), UPSERT_BATCH_SIZE)`), so batches are currently a 100-wide sliding window instead of disjoint groups, and every chunk gets upserted up to 100 times. Fix before running this against the real index again.
 - [ ] **Write the retrieval-side script** that actually queries `langchain-doc-index` (a `PineconeVectorStore.as_retriever()` + LCEL chain, same shape as `real_rag.py`) — ingestion exists, nothing reads from it yet.
 - [ ] **Make ingestion idempotent** — pass explicit deterministic `ids` (e.g. a hash of the URL, or URL + chunk index) to `aadd_documents` so re-running the script upserts-in-place instead of inserting duplicate vectors for the same pages. This would also make the sliding-window bug above harmless (duplicate upserts of the same id just overwrite), but the loop should still be fixed since it's currently doing ~100x more work than intended.
 - [ ] **Decide client-side vs. Pinecone-integrated embedding on purpose.** Right now `ingestion.py` computes embeddings client-side via OpenAI and just happens to match the index's dimension — worth deliberately comparing against using Pinecone's own hosted `llama-text-embed-v2` model directly (no OpenAI embedding call at all) to see the tradeoffs.
 - [ ] **Tune `MAX_CONCURRENT_UPSERTS` (currently 3) and `UPSERT_BATCH_SIZE` (currently 100)** against real Pinecone/OpenAI rate limits once the batching bug above is fixed — these were picked as reasonable defaults, not measured.
 
-**Done**
+### Done
+
 - [x] **Parallel tool calls** — confirmed in `teach_tool_calling.py`: one `HumanMessage` produced a single `AIMessage` with 4 `tool_calls` (Meta/Google/Salesforce/Uber), and the manual loop resolved all 4 correctly, matched back via `tool_call_id`.
 - [x] **Stage 1 of `tool_calling_manual_pydantic.py`** — same manual bind-tools loop as `teach_tool_calling.py`, tool schema defined as a bare Pydantic model instead of via `@tool`; confirmed `bind_tools` produces an identical `tool_calls` shape either way, and that execution/`ToolMessage`-wrapping has to be written by hand without a `BaseTool`.
 - [x] **`teach_react_agent.py`** — minimal single-tool ReAct loop built and confirmed working: text-format prompting + `stop=["\nObservation:"]` + string parsing, no `bind_tools` involved.
 - [x] **`agent_loop_with_react_prompt.py`** — extended ReAct to a real two-tool choice: dynamic `{tools}`/`{tool_names}` prompt building, two-stage parsing (action name + action input), Pydantic class-vs-instance field access (`model_fields`), and a repetition guard (prompt instruction + larger step budget) after the model got stuck re-trying the same search.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="troubleshooting"></a>
 
 ## 🐛 Troubleshooting
 
@@ -305,7 +450,11 @@ A living list, not a daily log — check items off or remove them as they're don
 | `TypeError: string indices must be integers` from a Tavily tool's result | The tool caught an internal error and returned it as a string instead of raising (`handle_tool_error=True`) — check `isinstance(res, dict)` and print `res` to see the real error |
 | `CERTIFICATE_VERIFY_FAILED` on macOS | Set `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to `certifi.where()` before making any HTTPS calls (see top of `ingestion.py`) |
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="resources"></a>
 
 ## 🔗 Resources
 
@@ -315,8 +464,14 @@ A living list, not a daily log — check items off or remove them as they're don
 - [OpenAI API Reference](https://platform.openai.com/docs/api-reference)
 - [Tavily API Reference](https://docs.tavily.com/)
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
+
+<a id="license"></a>
 
 ## 📝 License
 
 Distributed under the terms of the [LICENSE](LICENSE) file included in this repository.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
