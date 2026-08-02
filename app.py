@@ -1,8 +1,16 @@
+import os
 import time
 from typing import Set
 
 import streamlit as st
 from streamlit_chat import message
+
+# .env is gitignored (it holds real API keys), so on Streamlit Cloud there's
+# no .env for backend.core's load_dotenv() to find. Mirror any configured
+# secrets into the environment before importing backend.core.
+for _key in ("OPENAI_API_KEY", "PINECONE_API_KEY", "TAVILY_API_KEY"):
+    if _key in st.secrets:
+        os.environ[_key] = st.secrets[_key]
 
 from backend.core import run_llm
 
